@@ -35,6 +35,9 @@ var settingsWithDefault = []string{
 	EnvNotifyCooldown,
 	EnvProcessCmdline,
 	EnvNetSkip,
+	EnvNetQuality,
+	EnvNetQualityTargets,
+	EnvNetQualityInterval,
 	EnvPrometheus,
 }
 

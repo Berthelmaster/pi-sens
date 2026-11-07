@@ -13,6 +13,8 @@ const testHash = "$2a$10$azHQ.jqYzZIyXkRa.ETdgeauf8sdkH.P0fxNsJ6DnqpKRaQXd7dzG"
 
 var defaultNetSkip = []string{"lo", "veth*", "docker*", "br-*"}
 
+var defaultNetqTargets = []string{"1.1.1.1", "8.8.8.8"}
+
 func envFrom(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
@@ -27,6 +29,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "defaults",
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: 24 * time.Hour, History1mRetention: 168 * time.Hour, History15mRetention: 2160 * time.Hour,
 				NetSkip:        defaultNetSkip,
@@ -55,6 +58,7 @@ func TestLoad(t *testing.T) {
 				EnvNotifyCooldown: "5m",
 			},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens", HistoryInterval: 30 * time.Second,
 				HistoryRawRetention: 12 * time.Hour, History1mRetention: 72 * time.Hour, History15mRetention: 720 * time.Hour,
 				NetSkip:        defaultNetSkip,
@@ -75,6 +79,7 @@ func TestLoad(t *testing.T) {
 				"--notify-cooldown", "0",
 			},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens", HistoryInterval: time.Minute,
 				HistoryRawRetention: 6 * time.Hour, History1mRetention: 48 * time.Hour, History15mRetention: 8760 * time.Hour,
 				NetSkip:        defaultNetSkip,
@@ -107,6 +112,7 @@ func TestLoad(t *testing.T) {
 				EnvNotifyCooldown: "2m",
 			},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second,
 				HistoryRawRetention: 2 * time.Hour, History1mRetention: 24 * time.Hour, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -121,6 +127,7 @@ func TestLoad(t *testing.T) {
 			name: "watch services from env",
 			env:  map[string]string{EnvWatchServices: " ssh, pisens.service,,nginx "},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -135,6 +142,7 @@ func TestLoad(t *testing.T) {
 			args: []string{"--watch-services", "cron"},
 			env:  map[string]string{EnvWatchServices: "ssh,nginx"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -148,6 +156,7 @@ func TestLoad(t *testing.T) {
 			name: "auth from env",
 			env:  map[string]string{EnvAuthUser: "admin", EnvAuthPasswordHash: testHash},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -162,6 +171,7 @@ func TestLoad(t *testing.T) {
 			args: []string{"--auth-user", "pi", "--auth-password-hash", testHash},
 			env:  map[string]string{EnvAuthUser: "admin", EnvAuthPasswordHash: "$2a$10$fromtheenvironment"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -176,6 +186,7 @@ func TestLoad(t *testing.T) {
 			args: []string{"--watch-services="},
 			env:  map[string]string{EnvWatchServices: "ssh"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -188,6 +199,7 @@ func TestLoad(t *testing.T) {
 			name: "process cmdline from env",
 			env:  map[string]string{EnvProcessCmdline: "off"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -201,6 +213,7 @@ func TestLoad(t *testing.T) {
 			args: []string{"--process-cmdline", "full"},
 			env:  map[string]string{EnvProcessCmdline: "off"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -213,6 +226,7 @@ func TestLoad(t *testing.T) {
 			name: "net skip from env",
 			env:  map[string]string{EnvNetSkip: " lo, veth*,,cni*, virbr*,tailscale0 "},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        []string{"lo", "veth*", "cni*", "virbr*", "tailscale0"},
@@ -226,6 +240,7 @@ func TestLoad(t *testing.T) {
 			args: []string{"--net-skip", "lo,podman*"},
 			env:  map[string]string{EnvNetSkip: "lo,cni*"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        []string{"lo", "podman*"},
@@ -239,6 +254,7 @@ func TestLoad(t *testing.T) {
 			args: []string{"--net-skip="},
 			env:  map[string]string{EnvNetSkip: "lo"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				ProcessCmdline: DefaultProcessCmdline,
@@ -250,6 +266,7 @@ func TestLoad(t *testing.T) {
 			name: "energy price from env",
 			env:  map[string]string{EnvEnergyPrice: "2.45", EnvEnergyCurrency: "DKK"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -264,6 +281,7 @@ func TestLoad(t *testing.T) {
 			args: []string{"--energy-price", "0.3", "--energy-currency=EUR"},
 			env:  map[string]string{EnvEnergyPrice: "2.45", EnvEnergyCurrency: "DKK"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -277,6 +295,7 @@ func TestLoad(t *testing.T) {
 			name: "prometheus off by flag",
 			args: []string{"--prometheus=false"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -288,6 +307,7 @@ func TestLoad(t *testing.T) {
 			name: "prometheus off by env",
 			env:  map[string]string{EnvPrometheus: "false"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -296,10 +316,52 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
+			name: "netq from env",
+			env:  map[string]string{EnvNetQuality: "off", EnvNetQualityTargets: " 9.9.9.9 , one.one.one.one,", EnvNetQualityInterval: "30s"},
+			want: Config{
+				NetQuality: false, NetQualityTargets: []string{"9.9.9.9", "one.one.one.one"}, NetQualityInterval: 30 * time.Second,
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "netq flags win over env, empty targets leave only the gateway",
+			args: []string{"--netq=on", "--netq-targets=", "--netq-interval", "1m"},
+			env:  map[string]string{EnvNetQuality: "off", EnvNetQualityTargets: "9.9.9.9", EnvNetQualityInterval: "30s"},
+			want: Config{
+				NetQuality: true, NetQualityInterval: time.Minute,
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "netq off by bare flag value, invalid targets not checked",
+			args: []string{"--netq=false", "--netq-interval=0"},
+			env:  map[string]string{EnvNetQualityTargets: "::1"},
+			want: Config{
+				NetQuality: false, NetQualityTargets: []string{"::1"},
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
 			name: "prometheus flag wins over env",
 			args: []string{"--prometheus"},
 			env:  map[string]string{EnvPrometheus: "0"},
 			want: Config{
+				NetQuality: true, NetQualityTargets: defaultNetqTargets, NetQualityInterval: DefaultNetQualityInterval,
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NetSkip:        defaultNetSkip,
@@ -362,6 +424,14 @@ func TestLoadErrors(t *testing.T) {
 		{name: "negative energy price", args: []string{"--energy-price", "-1"}},
 		{name: "NaN energy price", env: map[string]string{EnvEnergyPrice: "NaN"}},
 		{name: "bad env prometheus", env: map[string]string{EnvPrometheus: "maybe"}},
+		{name: "bad env netq", env: map[string]string{EnvNetQuality: "disabled"}},
+		{name: "bad flag netq", args: []string{"--netq=sometimes"}},
+		{name: "bad env netq interval", env: map[string]string{EnvNetQualityInterval: "10"}},
+		{name: "short netq interval", args: []string{"--netq-interval", "500ms"}},
+		{name: "IPv6 netq target", env: map[string]string{EnvNetQualityTargets: "1.1.1.1,2606:4700:4700::1111"}},
+		{name: "host:port netq target", args: []string{"--netq-targets", "1.1.1.1:443"}},
+		{name: "URL netq target", args: []string{"--netq-targets", "https://example.com"}},
+		{name: "space in netq target", env: map[string]string{EnvNetQualityTargets: "1.1.1.1,my host"}},
 		{name: "positional args", args: []string{"extra"}},
 		{name: "auth user without hash", args: []string{"--auth-user", "admin"}},
 		{name: "auth hash without user", env: map[string]string{EnvAuthPasswordHash: testHash}},
