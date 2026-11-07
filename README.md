@@ -41,6 +41,8 @@ cd web && npm ci            # terminal 2, first time only
 npm run dev                 # dev server on http://localhost:5173
 ```
 
+The shell lives in `web/src/App.svelte` (header, nav and a small History API router in `src/lib/router.svelte.ts`) with pages in `src/pages/`. Each Overview card is its own component in `src/widgets/`; see `web/src/widgets/README.md` before adding one. Theme colours are CSS variables in `src/styles/theme.css`.
+
 Before committing frontend changes run `npm run check` (svelte-check, tsc and Prettier) in `web/`. `npm run format` fixes formatting.
 
 ### Configuration
