@@ -14,13 +14,23 @@ import (
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
-// shutdownTimeout bounds how long in-flight requests get to finish on shutdown.
-const shutdownTimeout = 10 * time.Second
+const (
+	// shutdownTimeout bounds how long in-flight requests get to finish on
+	// shutdown.
+	shutdownTimeout = 10 * time.Second
+	// writeTimeout bounds writing a response. Long-lived responses such as
+	// the SSE stream extend it per write with http.ResponseController.
+	writeTimeout = 30 * time.Second
+)
 
-// SnapshotSource provides the latest metrics snapshot. *metrics.Sampler
-// implements it.
+// SnapshotSource provides the latest metrics snapshot and a feed of new ones.
+// *metrics.Sampler implements it.
 type SnapshotSource interface {
 	Latest() (metrics.Snapshot, bool)
+	// Subscribe returns a channel of new snapshots and a function that
+	// unsubscribes and closes it. The channel is also closed when the source
+	// stops.
+	Subscribe() (<-chan metrics.Snapshot, func())
 }
 
 // Server serves the pisens HTTP API and the web UI.
@@ -31,6 +41,11 @@ type Server struct {
 	logger   *slog.Logger
 	mux      *http.ServeMux
 	snapshot SnapshotSource
+
+	// Timeouts are fields so tests can shorten them.
+	writeTimeout       time.Duration
+	heartbeatInterval  time.Duration
+	streamWriteTimeout time.Duration
 }
 
 // New creates a server that listens on addr, reports version from the health
@@ -44,6 +59,10 @@ func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots Snapshot
 		logger:   logger,
 		mux:      http.NewServeMux(),
 		snapshot: snapshots,
+
+		writeTimeout:       writeTimeout,
+		heartbeatInterval:  heartbeatInterval,
+		streamWriteTimeout: streamWriteTimeout,
 	}
 	s.routes()
 	return s
@@ -52,6 +71,7 @@ func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots Snapshot
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/metrics", s.handleMetrics)
+	s.mux.HandleFunc("GET /api/stream", s.handleStream)
 	// Everything else, including unknown /api paths, goes to the SPA handler.
 	s.mux.Handle("GET /", spaHandler{ui: s.ui, logger: s.logger})
 }
@@ -76,8 +96,12 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	srv := &http.Server{
 		Handler:           s.mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
-		ErrorLog:          slog.NewLogLogger(s.logger.Handler(), slog.LevelWarn),
+		WriteTimeout:      s.writeTimeout,
+		// Request contexts derive from ctx, so long-lived handlers such as
+		// the SSE stream return as soon as shutdown starts instead of
+		// holding Shutdown up until shutdownTimeout.
+		BaseContext: func(net.Listener) context.Context { return ctx },
+		ErrorLog:    slog.NewLogLogger(s.logger.Handler(), slog.LevelWarn),
 	}
 
 	errc := make(chan error, 1)
