@@ -24,6 +24,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: 24 * time.Hour, History1mRetention: 168 * time.Hour, History15mRetention: 2160 * time.Hour,
+				NotifyCooldown: 15 * time.Minute,
 			},
 		},
 		{
@@ -40,11 +41,17 @@ func TestLoad(t *testing.T) {
 				EnvHistory15mRetention: "720h",
 
 				EnvAlerts: "/etc/pisens/alerts.yaml",
+
+				EnvNotifyWebhook:  "https://hooks.example.com/pisens?token=abc",
+				EnvNotifyNtfy:     "https://ntfy.sh/my-pi",
+				EnvNotifyCooldown: "5m",
 			},
 			want: Config{
 				Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens", HistoryInterval: 30 * time.Second,
 				HistoryRawRetention: 12 * time.Hour, History1mRetention: 72 * time.Hour, History15mRetention: 720 * time.Hour,
-				AlertsFile: "/etc/pisens/alerts.yaml",
+				AlertsFile:    "/etc/pisens/alerts.yaml",
+				NotifyWebhook: "https://hooks.example.com/pisens?token=abc", NotifyNtfy: "https://ntfy.sh/my-pi",
+				NotifyCooldown: 5 * time.Minute,
 			},
 		},
 		{
@@ -53,18 +60,21 @@ func TestLoad(t *testing.T) {
 				"--listen", ":9090", "--interval=5s", "-data-dir", "/tmp/pisens", "--history-interval", "1m",
 				"--history-raw-retention", "6h", "--history-1m-retention=48h", "--history-15m-retention", "8760h",
 				"--alerts-file", "rules.yaml",
+				"--notify-webhook", "http://192.168.1.10:9000/hook", "--notify-ntfy=https://ntfy.example.com/pi",
+				"--notify-cooldown", "0",
 			},
 			want: Config{
 				Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens", HistoryInterval: time.Minute,
 				HistoryRawRetention: 6 * time.Hour, History1mRetention: 48 * time.Hour, History15mRetention: 8760 * time.Hour,
-				AlertsFile: "rules.yaml",
+				AlertsFile:    "rules.yaml",
+				NotifyWebhook: "http://192.168.1.10:9000/hook", NotifyNtfy: "https://ntfy.example.com/pi",
 			},
 		},
 		{
 			name: "flags win over env",
 			args: []string{
 				"--listen", ":9090", "--interval", "1m", "--history-interval", "20s", "--history-raw-retention", "2h",
-				"--alerts-file", "flag.yaml",
+				"--alerts-file", "flag.yaml", "--notify-ntfy", "https://ntfy.sh/flag", "--notify-cooldown", "1h",
 			},
 			env: map[string]string{
 				EnvListen:   ":7070",
@@ -77,11 +87,17 @@ func TestLoad(t *testing.T) {
 				EnvHistory1mRetention:  "24h",
 
 				EnvAlerts: "env.yaml",
+
+				EnvNotifyWebhook:  "https://env.example.com/hook",
+				EnvNotifyNtfy:     "https://ntfy.sh/env",
+				EnvNotifyCooldown: "2m",
 			},
 			want: Config{
 				Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second,
 				HistoryRawRetention: 2 * time.Hour, History1mRetention: 24 * time.Hour, History15mRetention: DefaultHistory15mRetention,
-				AlertsFile: "flag.yaml",
+				AlertsFile:    "flag.yaml",
+				NotifyWebhook: "https://env.example.com/hook", NotifyNtfy: "https://ntfy.sh/flag",
+				NotifyCooldown: time.Hour,
 			},
 		},
 		{
@@ -90,7 +106,8 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
-				WatchServices: []string{"ssh", "pisens.service", "nginx"},
+				NotifyCooldown: DefaultNotifyCooldown,
+				WatchServices:  []string{"ssh", "pisens.service", "nginx"},
 			},
 		},
 		{
@@ -100,7 +117,8 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
-				WatchServices: []string{"cron"},
+				NotifyCooldown: DefaultNotifyCooldown,
+				WatchServices:  []string{"cron"},
 			},
 		},
 		{
@@ -110,6 +128,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NotifyCooldown: DefaultNotifyCooldown,
 			},
 		},
 	}
@@ -148,6 +167,12 @@ func TestLoadErrors(t *testing.T) {
 		{name: "zero 15m retention", args: []string{"--history-15m-retention=0"}},
 		{name: "empty listen flag", args: []string{"--listen", ""}},
 		{name: "empty data dir flag", args: []string{"--data-dir="}},
+		{name: "bad env notify cooldown", env: map[string]string{EnvNotifyCooldown: "15 minutes"}},
+		{name: "negative notify cooldown", args: []string{"--notify-cooldown", "-1m"}},
+		{name: "webhook without scheme", args: []string{"--notify-webhook", "hooks.example.com/pisens"}},
+		{name: "webhook with other scheme", env: map[string]string{EnvNotifyWebhook: "ftp://example.com/hook"}},
+		{name: "ntfy topic without host", args: []string{"--notify-ntfy", "https:///topic"}},
+		{name: "ntfy bare topic", env: map[string]string{EnvNotifyNtfy: "my-pi-alerts"}},
 		{name: "unknown flag", args: []string{"--nope"}},
 		{name: "space in watched service", args: []string{"--watch-services", "ssh,my service"}},
 		{name: "path as watched service", env: map[string]string{EnvWatchServices: "/etc/systemd/ssh.service"}},
