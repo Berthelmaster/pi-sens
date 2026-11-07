@@ -2,7 +2,9 @@
   // Dev-only page (/dev/charts) for eyeballing the chart components with
   // static and live demo data in both themes. Not routed in production builds.
   import type uPlot from 'uplot'
+  import type { EnergyDailyResponse, EnergyDay } from '../api'
   import Card from '../components/Card.svelte'
+  import EnergyChart from '../components/EnergyChart.svelte'
   import Gauge, { gaugeStatus } from '../components/Gauge.svelte'
   import Sparkline from '../components/Sparkline.svelte'
   import TimeSeriesChart from '../components/TimeSeriesChart.svelte'
@@ -119,6 +121,45 @@
   // canvas count in devtools stay flat.
   let mounted = $state(true)
 
+  // Energy per day: 30 days of a Pi drawing 4-6 W, a day with nothing
+  // stored (pisens was off) and today still counting.
+  let energyPriced = $state(true)
+  const energyDays: EnergyDay[] = (() => {
+    const rand = rng(11)
+    const today = new Date()
+    return Array.from({ length: 30 }, (_, i) => {
+      const day = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate() - 29 + i,
+      )
+      const date = [
+        day.getFullYear(),
+        String(day.getMonth() + 1).padStart(2, '0'),
+        String(day.getDate()).padStart(2, '0'),
+      ].join('-')
+      const full = (0.1 + rand() * 0.05) * (i === 29 ? 0.4 : 1)
+      const kwh = i === 12 ? null : Math.round(full * 1e6) / 1e6
+      return { date, start: day.getTime() / 1000, kwh }
+    })
+  })()
+  let energy = $derived<EnergyDailyResponse>(
+    energyPriced
+      ? {
+          price: 2.45,
+          currency: 'DKK',
+          days: energyDays.map((d) =>
+            d.kwh === null
+              ? d
+              : { ...d, cost: Math.round(d.kwh * 2.45 * 1e4) / 1e4 },
+          ),
+        }
+      : { days: energyDays },
+  )
+  const noEnergy: EnergyDailyResponse = {
+    days: energyDays.map((d) => ({ ...d, kwh: null })),
+  }
+
   const pct = (v: number) => `${v.toFixed(0)}%`
   const celsius = (v: number) => `${v.toFixed(1)} °C`
 </script>
@@ -137,6 +178,9 @@
       <option value="two-cores">Core 2 and Core 0</option>
     </select>
   </label>
+  <label
+    ><input type="checkbox" bind:checked={energyPriced} /> Energy price</label
+  >
   <label>
     Gauge value
     <input type="range" min="0" max="100" bind:value={gaugeValue} />
@@ -217,6 +261,39 @@
         />
       </Card>
     </div>
+
+    <div class="wide">
+      <Card title="Energy per day">
+        <EnergyChart
+          data={energy}
+          loading={false}
+          label="Energy per day, last 30 days"
+        />
+      </Card>
+    </div>
+
+    <Card title="Energy per day, no data">
+      <EnergyChart
+        data={noEnergy}
+        loading={false}
+        height={160}
+        label="Energy per day, no data"
+      />
+    </Card>
+
+    <Card title="Energy per day, loading">
+      <EnergyChart data={null} loading={true} height={160} label="Loading" />
+    </Card>
+
+    <Card title="Energy per day, error">
+      <EnergyChart
+        data={null}
+        loading={false}
+        error="502 Bad Gateway"
+        height={160}
+        label="Error"
+      />
+    </Card>
 
     <div class="wide">
       <Card title="Linked crosshairs">

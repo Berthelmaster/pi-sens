@@ -73,3 +73,35 @@ export async function getHistory(
   for (const p of parts) Object.assign(out.series, p.series)
   return out
 }
+
+/** One local calendar day from /api/energy/daily. */
+export interface EnergyDay {
+  /** The Pi's local date, "2026-11-07". */
+  date: string
+  /** The day's local midnight, Unix seconds. */
+  start: number
+  /** kWh used that day, null without stored samples. Today's counts so far. */
+  kwh: number | null
+  /** kwh at the configured price; only there with a price and a kwh. */
+  cost?: number
+}
+
+export interface EnergyDailyResponse {
+  /** Every day in the range, oldest first, ending with today. */
+  days: EnergyDay[]
+  /** Price per kWh and its currency, only there when a price is set. */
+  price?: number
+  currency?: string
+}
+
+/** The energy used on each of the last `days` days, today included. */
+export async function getEnergyDaily(
+  days = 30,
+  signal?: AbortSignal,
+): Promise<EnergyDailyResponse> {
+  const body = await getJSON<EnergyDailyResponse>(
+    `/api/energy/daily?days=${days}`,
+    signal,
+  )
+  return { ...body, days: body.days ?? [] }
+}

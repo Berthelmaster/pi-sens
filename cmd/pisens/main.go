@@ -130,6 +130,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	}
 	collectors.SetEnergy(meter, cfg.EnergyPrice, cfg.EnergyCurrency)
 	logger.Info("energy meter", "path", meter.Path(), "price", cfg.EnergyPrice, "currency", cfg.EnergyCurrency)
+	serverOpts = append(serverOpts, server.WithEnergyPrice(cfg.EnergyPrice, cfg.EnergyCurrency))
 
 	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
 

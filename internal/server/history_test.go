@@ -236,7 +236,7 @@ func TestHistoryDatabaseError(t *testing.T) {
 	s := newHistoryServer(t, store)
 	store.Close()
 
-	for _, target := range []string{"/api/series", "/api/history?series=a&from=0"} {
+	for _, target := range []string{"/api/series", "/api/history?series=a&from=0", "/api/energy/daily"} {
 		if rec := get(t, s, target); rec.Code != http.StatusInternalServerError {
 			t.Errorf("GET %s status = %d, want %d", target, rec.Code, http.StatusInternalServerError)
 		}
@@ -245,7 +245,7 @@ func TestHistoryDatabaseError(t *testing.T) {
 
 func TestHistoryWithoutSource(t *testing.T) {
 	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
-	for _, target := range []string{"/api/series", "/api/history?series=a&from=0"} {
+	for _, target := range []string{"/api/series", "/api/history?series=a&from=0", "/api/energy/daily"} {
 		if rec := get(t, s, target); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s status = %d, want %d", target, rec.Code, http.StatusNotFound)
 		}
