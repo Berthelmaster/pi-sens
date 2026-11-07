@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,9 @@ func (r *sseReader) nextAlerts() alerts.Set {
 		if ev.event != "alerts" {
 			continue
 		}
+		if !strings.Contains(ev.data, `"op":">"`) && strings.Contains(ev.data, `"op"`) {
+			r.t.Errorf("alerts event %s is HTML-escaped, want \"op\":\">\"", ev.data)
+		}
 		var set alerts.Set
 		if err := json.Unmarshal([]byte(ev.data), &set); err != nil {
 			r.t.Fatalf("decode alerts %q: %v", ev.data, err)
@@ -57,6 +61,11 @@ func TestAlertsEndpoint(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	// Not HTML-escaped, so it reads like the README examples.
+	if raw := rec.Body.String(); !strings.Contains(raw, `"op":">"`) {
+		t.Errorf("body = %s, want an unescaped \"op\":\">\"", raw)
 	}
 
 	var body struct {

@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -56,13 +57,21 @@ type Alert struct {
 }
 
 // MarshalJSON adds the For duration as for_s in seconds, following the
-// unit-suffix convention of the series keys.
+// unit-suffix convention of the series keys. It does not HTML-escape, so the
+// op stays ">" for encoders that turn escaping off; json.Marshal still
+// escapes the result as usual.
 func (a Alert) MarshalJSON() ([]byte, error) {
 	type plain Alert // no methods, so no recursion
-	return json.Marshal(struct {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(struct {
 		plain
 		ForS float64 `json:"for_s"`
-	}{plain(a), a.For.Seconds()})
+	}{plain(a), a.For.Seconds()}); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // Transition is one state change of an alert, for notifiers.
