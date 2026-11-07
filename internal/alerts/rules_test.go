@@ -213,6 +213,7 @@ func TestDefaultRuleNames(t *testing.T) {
 		"cpu-temp-critical",
 		"undervoltage",
 		"undervoltage-recent",
+		"rtc-battery-low",
 		"throttled",
 		"disk-full",
 		"memory-high",
@@ -240,6 +241,14 @@ func TestUndervoltageRecentRule(t *testing.T) {
 	want := Rule{Name: "undervoltage-recent", Series: "power.undervoltage_events_5m", Op: OpAbove, Threshold: 0, Severity: SeverityWarning}
 	if r != want {
 		t.Errorf("undervoltage-recent = %+v, want %+v", r, want)
+	}
+}
+
+func TestRTCBatteryLowRule(t *testing.T) {
+	r := defaultRule(t, "rtc-battery-low")
+	want := Rule{Name: "rtc-battery-low", Series: "power.rtc_battery_v", Op: OpBelow, Threshold: 2.6, For: 10 * time.Minute, Severity: SeverityWarning}
+	if r != want {
+		t.Errorf("rtc-battery-low = %+v, want %+v", r, want)
 	}
 }
 

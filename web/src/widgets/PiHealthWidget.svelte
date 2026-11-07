@@ -11,6 +11,9 @@
     POWER_SERIES,
     powerSection,
     psuSummary,
+    RTC_BATTERY_WARN_V,
+    rtcBattery,
+    rtcSection,
     supplyLow,
     throttleBadges,
     throttleSection,
@@ -49,6 +52,9 @@
     throttle?.available ? undervoltageSummary(throttle) : undefined,
   )
 
+  // Read from sysfs rather than vcgencmd; only there with a battery fitted.
+  let rtc = $derived(rtcBattery(rtcSection($snapshot)))
+
   let volts = $derived(power?.available ? power.volts : undefined)
   let clocks = $derived(power?.available ? power.clocks_mhz : undefined)
   // Only a Pi 5 has the PMIC that reports the supply and the power draw.
@@ -63,7 +69,7 @@
       ? undefined
       : unavailable
         ? 'unknown'
-        : piHealthStatus(flags, ext5v),
+        : piHealthStatus(flags, ext5v, rtc?.volts),
   )
 
   function mhzToHz(mhz: unknown): number | undefined {
@@ -72,6 +78,30 @@
   }
 </script>
 
+{#snippet rtcRow()}
+  {#if rtc}
+    <div>
+      <dt title="Backup battery that keeps the clock running without power">
+        RTC battery:
+      </dt>
+      <dd
+        class:low={rtc.low}
+        title={rtc.low
+          ? `Below ${RTC_BATTERY_WARN_V} V, the clock may be wrong after a power cut until NTP syncs`
+          : undefined}
+      >
+        <span class="num">{formatVolts(rtc.volts)}</span>{#if rtc.charging},
+          <span
+            class="muted"
+            title={rtc.chargingVolts !== undefined
+              ? `Trickle charging to ${formatVolts(rtc.chargingVolts)}`
+              : 'Trickle charging'}>charging</span
+          >{/if}
+      </dd>
+    </div>
+  {/if}
+{/snippet}
+
 <Card title="Pi health" {status}>
   {#if !$snapshot}
     <p class="muted">Waiting for data…</p>
@@ -79,6 +109,9 @@
     <p class="muted">
       vcgencmd unavailable, add the service user to the video group
     </p>
+    {#if rtc}
+      <dl class="supply">{@render rtcRow()}</dl>
+    {/if}
   {:else}
     <h3>Throttling</h3>
     {#if throttleError}
@@ -107,7 +140,7 @@
         {/each}
       </ul>
     {/if}
-    {#if psu || undervoltage}
+    {#if psu || undervoltage || rtc}
       <dl class="supply">
         {#if psu}
           <div>
@@ -130,6 +163,7 @@
             <dd>{undervoltage}</dd>
           </div>
         {/if}
+        {@render rtcRow()}
       </dl>
     {/if}
 

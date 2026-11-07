@@ -5,6 +5,9 @@ import {
   piHealthStatus,
   powerSection,
   psuSummary,
+  rtcBattery,
+  rtcBatteryLow,
+  rtcSection,
   supplyLow,
   throttleBadges,
   throttleSection,
@@ -65,6 +68,14 @@ describe('piHealthStatus', () => {
     expect(piHealthStatus(clear, 4.79)).toBe('warning')
   })
 
+  it('warns about a low RTC battery', () => {
+    expect(piHealthStatus(clear, 5.1, 2.69)).toBe('warning')
+    expect(piHealthStatus(clear, 5.1, 2.7)).toBe('ok')
+    expect(piHealthStatus({ ...clear, throttled: true }, 5.1, 2.5)).toBe(
+      'critical',
+    )
+  })
+
   it('is ok when clear, with or without a supply reading', () => {
     expect(piHealthStatus(clear, 5.1)).toBe('ok')
     expect(piHealthStatus(clear, 4.8)).toBe('ok')
@@ -85,6 +96,49 @@ describe('supplyLow', () => {
   })
 })
 
+describe('rtcBatteryLow', () => {
+  it('warns below 2.7 V', () => {
+    expect(rtcBatteryLow(2.69)).toBe(true)
+    expect(rtcBatteryLow(2.7)).toBe(false)
+    expect(rtcBatteryLow(undefined)).toBe(false)
+    expect(rtcBatteryLow(NaN)).toBe(false)
+  })
+})
+
+describe('rtcBattery', () => {
+  it('reads a battery that is trickle charging', () => {
+    expect(
+      rtcBattery({
+        present: true,
+        rtc: 'rtc0',
+        battery: true,
+        battery_v: 3.021,
+        charging: true,
+        charging_voltage_v: 3,
+      }),
+    ).toEqual({ volts: 3.021, low: false, charging: true, chargingVolts: 3 })
+  })
+
+  it('flags a low battery that is not charging', () => {
+    expect(
+      rtcBattery({ present: true, battery: true, battery_v: 2.6 }),
+    ).toEqual({ volts: 2.6, low: true, charging: false })
+  })
+
+  it('is undefined without an RTC, a battery or a reading', () => {
+    expect(rtcBattery(undefined)).toBeUndefined()
+    expect(rtcBattery({ error: 'boom' })).toBeUndefined()
+    expect(rtcBattery({ present: false, battery: false })).toBeUndefined()
+    expect(
+      rtcBattery({ present: true, rtc: 'rtc0', battery: false }),
+    ).toBeUndefined()
+    expect(rtcBattery({ present: true, battery: true })).toBeUndefined()
+    expect(
+      rtcBattery({ present: true, battery: true, battery_v: 0 }),
+    ).toBeUndefined()
+  })
+})
+
 describe('sections', () => {
   it('picks the throttle and power sections', () => {
     const snap: Snapshot = {
@@ -96,6 +150,13 @@ describe('sections', () => {
       series: {},
     }
     expect(throttleSection(snap)).toEqual({ available: false })
+    expect(rtcSection(snap)).toBeUndefined()
+    expect(
+      rtcSection({
+        ...snap,
+        collectors: { rtc: { present: false, battery: false } },
+      }),
+    ).toEqual({ present: false, battery: false })
     expect(powerSection(snap)).toEqual({ error: 'boom' })
     expect(throttleSection(null)).toBeUndefined()
     expect(

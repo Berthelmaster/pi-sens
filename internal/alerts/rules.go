@@ -100,6 +100,7 @@ func DefaultRules() []Rule {
 		{Name: "cpu-temp-critical", Series: "temp.cpu_c", Op: OpAbove, Threshold: 82, For: 30 * time.Second, Severity: SeverityCritical},
 		{Name: "undervoltage", Series: "pi.undervoltage", Op: OpAbove, Threshold: 0, Severity: SeverityCritical},
 		{Name: "undervoltage-recent", Series: "power.undervoltage_events_5m", Op: OpAbove, Threshold: 0, Severity: SeverityWarning},
+		{Name: "rtc-battery-low", Series: "power.rtc_battery_v", Op: OpBelow, Threshold: 2.6, For: 10 * time.Minute, Severity: SeverityWarning},
 		{Name: "throttled", Series: "pi.throttled", Op: OpAbove, Threshold: 0, For: 30 * time.Second, Severity: SeverityWarning},
 		{Name: "disk-full", Series: "fs.*.used_pct", Op: OpAbove, Threshold: 90, Severity: SeverityWarning},
 		{Name: "memory-high", Series: "mem.used_pct", Op: OpAbove, Threshold: 90, For: 2 * time.Minute, Severity: SeverityWarning},

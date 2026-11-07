@@ -129,6 +129,19 @@ Under-voltage is the most common cause of a flaky Pi, so the `throttle` section 
 
 The PMIC sees what it supplies to the board (SoC, RAM, wireless, HDMI and so on), not USB devices or its own losses, so the totals are an estimate that stays below what a meter at the wall would show.
 
+### RTC battery
+
+The Pi 5 has a real-time clock with an optional backup battery. When the battery runs flat the clock is wrong after a power cut until NTP syncs, and so are the history timestamps of that stretch. The `rtc` section reports it:
+
+```json
+"rtc": {
+  "present": true, "rtc": "rtc0", "name": "rpi-rtc soc@107c000000:rpi_rtc",
+  "battery": true, "battery_v": 3.021, "charging": true, "charging_voltage_v": 3
+}
+```
+
+The readings come from `battery_voltage` and `charging_voltage` of the first `/sys/class/rtc/rtc<N>` that has a `battery_voltage`. `charging` is true while trickle charging is on (`dtparam=rtc_bbat_vchg=3000000` in `config.txt`, only for a rechargeable cell) and `charging_voltage_v` is what it charges to. The series `power.rtc_battery_v` goes to the history and drives the built-in `rtc-battery-low` alert. The Pi health card shows the voltage, in amber below 2.7 V. Without a battery the RTC reads 0 V and the section is `{"present": true, "rtc": "rtc0", "battery": false}`; without an RTC that reports its battery (anything before the Pi 5, or not a Pi) it is `{"present": false, "battery": false}`. Neither has a series.
+
 ### Network quality
 
 The `netquality` section shows when the network or the internet was flaky. Every 10 seconds (`--netq-interval`) a background goroutine sends a burst of 5 pings, 200 ms apart, to the default gateway (the lowest metric default route in `/proc/net/route`, read again every round) and to each of `--netq-targets`, all targets at once. A ping that gets no answer within a second is lost. The sampler only reads the latest round, so a slow network never holds up a sample.
@@ -269,18 +282,21 @@ pisens checks alert rules against every sample. A rule compares one series, or e
 
 Without a rules file these built-in rules apply:
 
-| Name                  | Rule                               | Severity |
-|-----------------------|------------------------------------|----------|
-| `cpu-temp-high`       | `temp.cpu_c > 75` for 1m           | warning  |
-| `cpu-temp-critical`   | `temp.cpu_c > 82` for 30s          | critical |
-| `undervoltage`        | `pi.undervoltage > 0`              | critical |
-| `undervoltage-recent` | `power.undervoltage_events_5m > 0` | warning  |
-| `throttled`           | `pi.throttled > 0` for 30s         | warning  |
-| `disk-full`           | `fs.*.used_pct > 90`               | warning  |
-| `memory-high`         | `mem.used_pct > 90` for 2m         | warning  |
-| `services-failed`     | `services.failed > 0` for 1m       | warning  |
+| Name                  | Rule                                | Severity |
+|-----------------------|-------------------------------------|----------|
+| `cpu-temp-high`       | `temp.cpu_c > 75` for 1m            | warning  |
+| `cpu-temp-critical`   | `temp.cpu_c > 82` for 30s           | critical |
+| `undervoltage`        | `pi.undervoltage > 0`               | critical |
+| `undervoltage-recent` | `power.undervoltage_events_5m > 0`  | warning  |
+| `rtc-battery-low`     | `power.rtc_battery_v < 2.6` for 10m | warning  |
+| `throttled`           | `pi.throttled > 0` for 30s          | warning  |
+| `disk-full`           | `fs.*.used_pct > 90`                | warning  |
+| `memory-high`         | `mem.used_pct > 90` for 2m          | warning  |
+| `services-failed`     | `services.failed > 0` for 1m        | warning  |
 
 `undervoltage-recent` fires for 5 minutes after every under-voltage event (see [Power supply](#power-supply)), so a dip that is over before the next sample still shows up.
+
+`rtc-battery-low` fires when the RTC backup battery (see [RTC battery](#rtc-battery)) has been below 2.6 V for 10 minutes. Without a battery fitted there is no `power.rtc_battery_v` series, so it never fires.
 
 `services-failed` fires when a systemd service has been in the failed state for a minute; the **Services** section shows which one. On a machine without systemctl there is no `services.failed` series, so it never fires.
 

@@ -82,11 +82,36 @@ export interface PowerRail {
   watts: number
 }
 
+/**
+ * The `rtc` collector's section (rtcData in internal/collectors/rtc.go).
+ * Without an RTC that reports its battery only `present: false` is sent;
+ * without a battery fitted `battery` is false and the readings are left out.
+ */
+export interface RtcSection {
+  present: boolean
+  /** The RTC device, e.g. "rtc0". */
+  rtc?: string
+  /** Its driver name, "rpi-rtc ..." on a Pi 5. */
+  name?: string
+  battery: boolean
+  battery_v?: number
+  /** Whether trickle charging is on; missing if the RTC cannot charge. */
+  charging?: boolean
+  /** The voltage it charges to, only while charging is on. */
+  charging_voltage_v?: number
+}
+
 /** Series key of the estimated power draw (Pi 5 only). */
 export const POWER_SERIES = 'pi.power_w'
 
 /** Below this the 5 V supply is too weak for a Pi 5 under load. */
 export const EXT5V_WARN_V = 4.8
+
+/**
+ * Below this the RTC battery is getting flat. The built-in rtc-battery-low
+ * alert fires a little lower, at 2.6 V.
+ */
+export const RTC_BATTERY_WARN_V = 2.7
 
 function section(snap: Snapshot | null, name: string): object | undefined {
   const s = snap?.collectors[name]
@@ -106,6 +131,13 @@ export function powerSection(
   snap: Snapshot | null,
 ): PowerSection | CollectorError | undefined {
   return section(snap, 'power') as PowerSection | CollectorError | undefined
+}
+
+/** The rtc section of a snapshot, or undefined when it has none. */
+export function rtcSection(
+  snap: Snapshot | null,
+): RtcSection | CollectorError | undefined {
+  return section(snap, 'rtc') as RtcSection | CollectorError | undefined
 }
 
 export type ThrottleState = 'active' | 'occurred'
@@ -169,17 +201,55 @@ export function supplyLow(volts: number | undefined): boolean {
 
 /**
  * The Pi health card status: critical while any flag is set now, warning
- * when one was set since boot or the supply is low, ok when the flags are
- * known and clear, unknown without flags.
+ * when one was set since boot, the supply is low or the RTC battery is
+ * getting flat, ok when the flags are known and clear, unknown without
+ * flags.
  */
 export function piHealthStatus(
   flags: Partial<ThrottleFlags> | undefined,
   ext5v: number | undefined,
+  rtcBatteryV?: number,
 ): 'ok' | 'warning' | 'critical' | 'unknown' {
   const badges = throttleBadges(flags)
   if (badges.some((b) => b.state === 'active')) return 'critical'
-  if (badges.length > 0 || supplyLow(ext5v)) return 'warning'
+  if (badges.length > 0 || supplyLow(ext5v) || rtcBatteryLow(rtcBatteryV)) {
+    return 'warning'
+  }
   return flags ? 'ok' : 'unknown'
+}
+
+/** Whether the RTC battery is low enough to warn about. */
+export function rtcBatteryLow(volts: number | undefined): boolean {
+  return (
+    volts !== undefined && Number.isFinite(volts) && volts < RTC_BATTERY_WARN_V
+  )
+}
+
+export interface RtcBattery {
+  volts: number
+  low: boolean
+  charging: boolean
+  /** The voltage it trickle charges to, when charging and known. */
+  chargingVolts?: number
+}
+
+/**
+ * The RTC battery for display, or undefined when there is no RTC, no
+ * battery fitted or the section is an error.
+ */
+export function rtcBattery(
+  rtc: Partial<RtcSection> | CollectorError | undefined,
+): RtcBattery | undefined {
+  if (!rtc || !('battery' in rtc) || rtc.battery !== true) return undefined
+  const volts = num(rtc.battery_v)
+  if (volts === undefined || volts <= 0) return undefined
+  const charging = rtc.charging === true
+  return {
+    volts,
+    low: rtcBatteryLow(volts),
+    charging,
+    chargingVolts: charging ? num(rtc.charging_voltage_v) : undefined,
+  }
 }
 
 export interface PsuSummary {

@@ -375,11 +375,12 @@ func TestDefaultRulesFire(t *testing.T) {
 		"pi.undervoltage":              1,
 		"pi.throttled":                 1,
 		"power.undervoltage_events_5m": 1,
+		"power.rtc_battery_v":          2.4,
 		"fs.root.used_pct":             95,
 		"mem.used_pct":                 95,
 		"services.failed":              2,
 	}
-	for at := time.Duration(0); at <= 2*time.Minute; at += 2 * time.Second {
+	for at := time.Duration(0); at <= 10*time.Minute; at += 2 * time.Second {
 		e.Evaluate(snapAt(at, bad))
 	}
 	var fired []string
@@ -394,6 +395,7 @@ func TestDefaultRulesFire(t *testing.T) {
 		"cpu-temp-high@1m0s",
 		"disk-full@0s",
 		"memory-high@2m0s",
+		"rtc-battery-low@10m0s",
 		"services-failed@1m0s",
 		"throttled@30s",
 		"undervoltage-recent@0s",
