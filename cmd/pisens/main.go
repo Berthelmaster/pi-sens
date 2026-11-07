@@ -64,6 +64,8 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		"interval", cfg.Interval.String(),
 		"data_dir", cfg.DataDir,
 		"history_interval", cfg.HistoryInterval.String(),
+		"history_retention", fmt.Sprintf("raw %s, 1m %s, 15m %s",
+			cfg.HistoryRawRetention, cfg.History1mRetention, cfg.History15mRetention),
 	)
 	rulesFrom := "built-in"
 	if cfg.AlertsFile != "" {
@@ -89,6 +91,23 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	writerDone := make(chan error, 1)
 	go func() { writerDone <- writer.Run(ctx, snaps) }()
 
+	// A sample reaches the database within about a history interval plus a
+	// sample interval of its timestamp; the second sample interval is slack.
+	downsampler := history.NewDownsampler(store, history.DownsamplerOptions{
+		Retention: history.Retention{
+			Raw:     cfg.HistoryRawRetention,
+			Minute:  cfg.History1mRetention,
+			Quarter: cfg.History15mRetention,
+		},
+		Delay:  cfg.HistoryInterval + 2*cfg.Interval,
+		Logger: logger,
+	})
+	downsamplerDone := make(chan struct{})
+	go func() {
+		defer close(downsamplerDone)
+		downsampler.Run(ctx)
+	}()
+
 	// The evaluator gets its own subscription, also taken before the sampler
 	// starts so the first sample is evaluated.
 	evaluator := alerts.NewEvaluator(rules, logger)
@@ -113,6 +132,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	if werr := <-writerDone; werr != nil {
 		logger.Error("history writer failed to save pending samples", "err", werr)
 	}
+	<-downsamplerDone
 	if cerr := store.Close(); cerr != nil {
 		logger.Error("close history database", "err", cerr)
 	}

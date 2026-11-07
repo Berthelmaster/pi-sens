@@ -21,6 +21,10 @@ const (
 	DefaultDataDir  = "./data"
 
 	DefaultHistoryInterval = 10 * time.Second
+
+	DefaultHistoryRawRetention = 24 * time.Hour
+	DefaultHistory1mRetention  = 7 * 24 * time.Hour
+	DefaultHistory15mRetention = 90 * 24 * time.Hour
 )
 
 // Environment variable names.
@@ -30,7 +34,12 @@ const (
 	EnvDataDir  = "PISENS_DATA_DIR"
 
 	EnvHistoryInterval = "PISENS_HISTORY_INTERVAL"
-	EnvAlerts          = "PISENS_ALERTS_FILE"
+
+	EnvHistoryRawRetention = "PISENS_HISTORY_RAW_RETENTION"
+	EnvHistory1mRetention  = "PISENS_HISTORY_1M_RETENTION"
+	EnvHistory15mRetention = "PISENS_HISTORY_15M_RETENTION"
+
+	EnvAlerts = "PISENS_ALERTS_FILE"
 )
 
 // Config is the resolved runtime configuration.
@@ -44,6 +53,12 @@ type Config struct {
 	// HistoryInterval is how often samples are written to the history
 	// database.
 	HistoryInterval time.Duration
+	// HistoryRawRetention, History1mRetention and History15mRetention are
+	// how long the history database keeps raw samples and the 1 minute and
+	// 15 minute rollups.
+	HistoryRawRetention time.Duration
+	History1mRetention  time.Duration
+	History15mRetention time.Duration
 	// AlertsFile is a YAML file of alert rules that replaces the built-in
 	// ones. Empty means use the built-in rules.
 	AlertsFile string
@@ -66,6 +81,10 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		DataDir:  DefaultDataDir,
 
 		HistoryInterval: DefaultHistoryInterval,
+
+		HistoryRawRetention: DefaultHistoryRawRetention,
+		History1mRetention:  DefaultHistory1mRetention,
+		History15mRetention: DefaultHistory15mRetention,
 	}
 
 	// Invalid environment values are reported after the flags are parsed, so
@@ -74,24 +93,30 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if v := getenv(EnvListen); v != "" {
 		cfg.Listen = v
 	}
-	if v := getenv(EnvInterval); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: %w", EnvInterval, v, err))
-		} else {
-			cfg.Interval = d
-		}
-	}
 	if v := getenv(EnvDataDir); v != "" {
 		cfg.DataDir = v
 	}
-	if v := getenv(EnvHistoryInterval); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: %w", EnvHistoryInterval, v, err))
-		} else {
-			cfg.HistoryInterval = d
+	durations := []struct {
+		env string
+		dst *time.Duration
+	}{
+		{EnvInterval, &cfg.Interval},
+		{EnvHistoryInterval, &cfg.HistoryInterval},
+		{EnvHistoryRawRetention, &cfg.HistoryRawRetention},
+		{EnvHistory1mRetention, &cfg.History1mRetention},
+		{EnvHistory15mRetention, &cfg.History15mRetention},
+	}
+	for _, d := range durations {
+		v := getenv(d.env)
+		if v == "" {
+			continue
 		}
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: %w", d.env, v, err))
+			continue
+		}
+		*d.dst = parsed
 	}
 	cfg.AlertsFile = getenv(EnvAlerts)
 
@@ -103,6 +128,12 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory (env "+EnvDataDir+")")
 	fs.DurationVar(&cfg.HistoryInterval, "history-interval", cfg.HistoryInterval,
 		"how often samples are written to the history database (env "+EnvHistoryInterval+")")
+	fs.DurationVar(&cfg.HistoryRawRetention, "history-raw-retention", cfg.HistoryRawRetention,
+		"how long raw history samples are kept (env "+EnvHistoryRawRetention+")")
+	fs.DurationVar(&cfg.History1mRetention, "history-1m-retention", cfg.History1mRetention,
+		"how long 1 minute history averages are kept (env "+EnvHistory1mRetention+")")
+	fs.DurationVar(&cfg.History15mRetention, "history-15m-retention", cfg.History15mRetention,
+		"how long 15 minute history averages are kept (env "+EnvHistory15mRetention+")")
 	fs.StringVar(&cfg.AlertsFile, "alerts-file", cfg.AlertsFile, "YAML file of alert rules that replaces the built-in rules (env "+EnvAlerts+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
@@ -134,6 +165,19 @@ func (c Config) validate() error {
 	}
 	if c.HistoryInterval <= 0 {
 		errs = append(errs, fmt.Errorf("history interval must be positive, got %s", c.HistoryInterval))
+	}
+	retentions := []struct {
+		name string
+		d    time.Duration
+	}{
+		{"history raw retention", c.HistoryRawRetention},
+		{"history 1m retention", c.History1mRetention},
+		{"history 15m retention", c.History15mRetention},
+	}
+	for _, r := range retentions {
+		if r.d <= 0 {
+			errs = append(errs, fmt.Errorf("%s must be positive, got %s", r.name, r.d))
+		}
 	}
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data directory must not be empty"))
