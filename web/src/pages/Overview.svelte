@@ -4,6 +4,7 @@
   import NetworkWidget from '../widgets/NetworkWidget.svelte'
   import PiHealthWidget from '../widgets/PiHealthWidget.svelte'
   import ProcessesWidget from '../widgets/ProcessesWidget.svelte'
+  import ServicesWidget from '../widgets/ServicesWidget.svelte'
   import StorageWidget from '../widgets/StorageWidget.svelte'
   import SystemInfoWidget from '../widgets/SystemInfoWidget.svelte'
   import TemperatureWidget from '../widgets/TemperatureWidget.svelte'
@@ -19,6 +20,7 @@
   <StorageWidget />
   <NetworkWidget />
   <PiHealthWidget />
+  <ServicesWidget />
   <div class="full">
     <ProcessesWidget />
   </div>
