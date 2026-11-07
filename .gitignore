@@ -1,0 +1,16 @@
+# Build output
+/bin/
+
+# Runtime data
+/data/
+
+# Test and coverage output
+*.test
+*.out
+coverage.*
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
