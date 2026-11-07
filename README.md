@@ -160,6 +160,8 @@ curl -N localhost:8080/api/stream
 
 On a Raspberry Pi 5 with the default retention for 50 series (a 91 MB database), a 30 day query for 10 series takes 60–110 ms, measured with curl against the running binary.
 
+The **History** page in the dashboard charts this API. Pick 1h, 6h, 24h, 7d, 30d or 90d, or a custom from/to; ranges up to 24h refresh every 30 seconds. The default charts (CPU, temperature and fan, memory, network, disk I/O, Pi power and voltage) only show the series this Pi has, and where a point stands for several samples a shaded band shows their min and max. The custom chart plots any stored series together, up to 8. The range and the custom series are kept in the URL, e.g. `/history?range=7d&series=cpu.usage_pct,temp.cpu_c` or `/history?from=1762473600&to=1762560000`, so a link shows the same charts.
+
 ### Alerts
 
 pisens checks alert rules against every sample. A rule compares one series, or every series matching a glob, with a threshold. When the comparison holds, the alert for that series is pending; once it has held for the rule's `for` duration it fires, and it resolves as soon as the comparison stops holding. A series that disappears for three samples in a row also ends its alert, so an unmounted disk does not stay firing forever, while a single failed collection does not end one.
