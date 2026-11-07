@@ -4,6 +4,7 @@
   import Hostname from './components/Hostname.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
   import { followLink, router } from './lib/router.svelte'
+  import ChartsDemo from './pages/ChartsDemo.svelte'
   import History from './pages/History.svelte'
   import NotFound from './pages/NotFound.svelte'
   import Overview from './pages/Overview.svelte'
@@ -19,7 +20,15 @@
     { path: '/history', label: 'History', page: History },
   ]
 
-  let active = $derived(routes.find((r) => r.path === router.path))
+  // Dev-only pages: reachable by URL under `npm run dev`, left out of the nav
+  // and dropped from production builds.
+  const devRoutes: Route[] = import.meta.env.DEV
+    ? [{ path: '/dev/charts', label: 'Charts', page: ChartsDemo }]
+    : []
+
+  let active = $derived(
+    [...routes, ...devRoutes].find((r) => r.path === router.path),
+  )
   let Page = $derived(active?.page ?? NotFound)
 
   $effect(() => {
