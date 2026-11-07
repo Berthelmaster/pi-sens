@@ -196,6 +196,54 @@ func TestCollectorRespectingContextIsCancelled(t *testing.T) {
 	}
 }
 
+func TestCancelledRoundIsDiscarded(t *testing.T) {
+	block := false
+	started := make(chan struct{}, 1)
+	c := funcCollector{name: "slow", fn: func(ctx context.Context, _ *Env) (Result, error) {
+		if !block {
+			return Result{Data: map[string]int{"v": 1}}, nil
+		}
+		started <- struct{}{}
+		<-ctx.Done()
+		return Result{}, ctx.Err()
+	}}
+	var buf bytes.Buffer
+	s := NewSampler(Options{
+		Interval: time.Hour, Timeout: time.Minute,
+		Collectors: []Collector{c, static("good", nil, map[string]float64{"good.v_count": 1})},
+		FS:         fstest.MapFS{}, Runner: &FakeRunner{},
+		Logger: slog.New(slog.NewTextHandler(&buf, nil)),
+	})
+
+	first := s.Sample(context.Background())
+	ch, unsubscribe := s.Subscribe()
+	defer unsubscribe()
+
+	block = true
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+	s.Sample(ctx)
+
+	latest, ok := s.Latest()
+	if !ok || !latest.Timestamp.Equal(first.Timestamp) {
+		t.Errorf("Latest() = %v, %v, want the first round's snapshot", latest.Timestamp, ok)
+	}
+	if got := section(t, latest, "slow"); got["v"] != 1.0 {
+		t.Errorf("Latest slow section = %v, want v=1", got)
+	}
+	select {
+	case snap := <-ch:
+		t.Errorf("subscriber received the cancelled round %v", snap.Collectors)
+	default:
+	}
+	if strings.Contains(buf.String(), "collector failed") {
+		t.Errorf("cancelled round logged a failure:\n%s", buf.String())
+	}
+}
+
 func TestEnvTimes(t *testing.T) {
 	var envs []Env
 	c := funcCollector{name: "c", fn: func(_ context.Context, env *Env) (Result, error) {

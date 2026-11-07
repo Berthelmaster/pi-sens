@@ -150,6 +150,11 @@ func (s *Sampler) Run(ctx context.Context) error {
 
 // Sample runs one round: every collector in parallel, each bounded by the
 // timeout. The new snapshot becomes Latest and is sent to subscribers.
+//
+// If ctx is done by the time the round finishes (typically on shutdown), the
+// round is discarded: Latest stays as it was, subscribers get nothing and no
+// collector errors are logged, since they would only report the
+// cancellation. The discarded snapshot is still returned.
 func (s *Sampler) Sample(ctx context.Context) Snapshot {
 	s.sampleMu.Lock()
 	defer s.sampleMu.Unlock()
@@ -165,6 +170,7 @@ func (s *Sampler) Sample(ctx context.Context) Snapshot {
 		}()
 	}
 	wg.Wait()
+	cancelled := ctx.Err() != nil
 
 	snap := Snapshot{
 		Timestamp:  now,
@@ -174,16 +180,23 @@ func (s *Sampler) Sample(ctx context.Context) Snapshot {
 	for i, st := range s.states {
 		name := st.c.Name()
 		o := outcomes[i]
-		s.logTransition(st, o.err)
+		if !cancelled {
+			s.logTransition(st, o.err)
+		}
 		if o.err != nil {
 			snap.Collectors[name] = errorSection(o.err)
 			continue
 		}
+		// Advance prev even in a discarded round: the collector has already
+		// updated its own counters, so its next rate must be measured from now.
 		st.prev = now
 		snap.Collectors[name] = o.data
 		for k, v := range o.series {
 			snap.Series[k] = v
 		}
+	}
+	if cancelled {
+		return snap
 	}
 
 	s.latestMu.Lock()
