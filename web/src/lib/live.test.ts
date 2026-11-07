@@ -393,6 +393,85 @@ describe('createLive', () => {
     expect(set.get()?.firing).toEqual([])
   })
 
+  it('clears the alerts when a reconnected backend has them turned off', async () => {
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
+    const live = setup()
+    const set = watch(live.alerts)
+    const alertCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => url === '/api/alerts').length
+    last().open()
+    last().sendAlerts(alertSet(7, 'hot'))
+    expect(alertCalls()).toBe(1)
+
+    // Restarted without a rules file: the new stream never sends alerts.
+    last().fail()
+    vi.advanceTimersByTime(1000)
+    last().open()
+    expect(alertCalls()).toBe(2)
+    respond(
+      '/api/alerts',
+      new Response('{"error":"not found"}', { status: 404 }),
+    )
+    await vi.waitFor(() => expect(set.get()).toBeNull())
+  })
+
+  it('takes the alerts /api/alerts returns after a reconnect', async () => {
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
+    const live = setup()
+    const set = watch(live.alerts)
+    last().open()
+    last().sendAlerts(alertSet(7, 'hot'))
+    last().fail()
+    vi.advanceTimersByTime(1000)
+    last().open()
+
+    respond('/api/alerts', new Response(JSON.stringify(alertSet(0, 'full'))))
+    await vi.waitFor(() =>
+      expect(set.get()?.firing.map((a) => a.rule)).toEqual(['full']),
+    )
+  })
+
+  it('lets the reconnected stream win over the alerts recheck', async () => {
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
+    const live = setup()
+    const set = watch(live.alerts)
+    last().open()
+    last().sendAlerts(alertSet(7, 'hot'))
+    last().fail()
+    vi.advanceTimersByTime(1000)
+    last().open()
+    last().sendAlerts(alertSet(1, 'full'))
+
+    respond(
+      '/api/alerts',
+      new Response('{"error":"not found"}', { status: 404 }),
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    expect(set.get()?.firing.map((a) => a.rule)).toEqual(['full'])
+  })
+
+  it('rechecks the alerts when resubscribed', async () => {
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
+    const live = setup()
+    let set = watch(live.alerts)
+    last().open()
+    last().sendAlerts(alertSet(7, 'hot'))
+    set.unsubscribe()
+
+    set = watch(live.alerts)
+    expect(set.get()?.firing).toHaveLength(1)
+    last().open()
+    respond(
+      '/api/alerts',
+      new Response('{"error":"not found"}', { status: 404 }),
+    )
+    await vi.waitFor(() => expect(set.get()).toBeNull())
+  })
+
   it('lets the stream win over a slow /api/alerts', async () => {
     const { fn, respond } = fetchByUrl()
     fetchMock = fn
