@@ -20,7 +20,7 @@ func TestLoad(t *testing.T) {
 	}{
 		{
 			name: "defaults",
-			want: Config{Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data"},
+			want: Config{Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second},
 		},
 		{
 			name: "env only",
@@ -28,23 +28,27 @@ func TestLoad(t *testing.T) {
 				EnvListen:   "127.0.0.1:9000",
 				EnvInterval: "500ms",
 				EnvDataDir:  "/var/lib/pisens",
+
+				EnvHistoryInterval: "30s",
 			},
-			want: Config{Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens"},
+			want: Config{Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens", HistoryInterval: 30 * time.Second},
 		},
 		{
 			name: "flags only",
-			args: []string{"--listen", ":9090", "--interval=5s", "-data-dir", "/tmp/pisens"},
-			want: Config{Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens"},
+			args: []string{"--listen", ":9090", "--interval=5s", "-data-dir", "/tmp/pisens", "--history-interval", "1m"},
+			want: Config{Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens", HistoryInterval: time.Minute},
 		},
 		{
 			name: "flags win over env",
-			args: []string{"--listen", ":9090", "--interval", "1m"},
+			args: []string{"--listen", ":9090", "--interval", "1m", "--history-interval", "20s"},
 			env: map[string]string{
 				EnvListen:   ":7070",
 				EnvInterval: "10s",
 				EnvDataDir:  "/from/env",
+
+				EnvHistoryInterval: "5m",
 			},
-			want: Config{Listen: ":9090", Interval: time.Minute, DataDir: "/from/env"},
+			want: Config{Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second},
 		},
 	}
 
@@ -71,6 +75,9 @@ func TestLoadErrors(t *testing.T) {
 		{name: "bad flag interval", args: []string{"--interval", "soon"}},
 		{name: "zero interval", args: []string{"--interval", "0s"}},
 		{name: "negative interval", env: map[string]string{EnvInterval: "-1s"}},
+		{name: "bad env history interval", env: map[string]string{EnvHistoryInterval: "often"}},
+		{name: "zero history interval", args: []string{"--history-interval", "0s"}},
+		{name: "negative history interval", env: map[string]string{EnvHistoryInterval: "-10s"}},
 		{name: "empty listen flag", args: []string{"--listen", ""}},
 		{name: "empty data dir flag", args: []string{"--data-dir="}},
 		{name: "unknown flag", args: []string{"--nope"}},
