@@ -1,0 +1,7 @@
+avahi-daemon.service           loaded    active   running Avahi mDNS/DNS-SD Stack
+cron.service                   loaded    active   running Regular background program processing daemon
+dphys-swapfile.service         loaded    failed   failed  dphys-swapfile - set up, mount/unmount, and delete a swap file
+hciuart.service                loaded    inactive dead    Configure Bluetooth Modems connected by UART
+nfs-server.service             not-found inactive dead    nfs-server.service
+ssh.service                    loaded    active   running OpenBSD Secure Shell server
+systemd-journald.service       loaded    active   running Journal Service

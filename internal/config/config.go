@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -47,6 +48,7 @@ const (
 	EnvNotifyWebhook  = "PISENS_NOTIFY_WEBHOOK"
 	EnvNotifyNtfy     = "PISENS_NOTIFY_NTFY"
 	EnvNotifyCooldown = "PISENS_NOTIFY_COOLDOWN"
+	EnvWatchServices  = "PISENS_WATCH_SERVICES"
 )
 
 // Config is the resolved runtime configuration.
@@ -78,6 +80,9 @@ type Config struct {
 	// NotifyCooldown is the shortest time between two firing notifications
 	// for the same alert. Zero turns the cooldown off.
 	NotifyCooldown time.Duration
+	// WatchServices are the systemd units whose state is reported on every
+	// sample, e.g. ["ssh", "pisens.service"]. Empty means none.
+	WatchServices []string
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -141,6 +146,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	cfg.NotifyWebhook = getenv(EnvNotifyWebhook)
 	cfg.NotifyNtfy = getenv(EnvNotifyNtfy)
 
+	watch := getenv(EnvWatchServices)
+
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
 	fs.SetOutput(output)
@@ -162,6 +169,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"ntfy topic URL for alert notifications, e.g. https://ntfy.sh/my-pi (env "+EnvNotifyNtfy+")")
 	fs.DurationVar(&cfg.NotifyCooldown, "notify-cooldown", cfg.NotifyCooldown,
 		"shortest time between two notifications that the same alert fires, 0 for none (env "+EnvNotifyCooldown+")")
+	fs.StringVar(&watch, "watch-services", watch,
+		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
@@ -176,10 +185,23 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if fs.NArg() > 0 {
 		return Config{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
+	cfg.WatchServices = splitList(watch)
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// splitList splits a comma separated list, trimming spaces and dropping empty
+// items. It returns nil for an empty list.
+func splitList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (c Config) validate() error {
@@ -217,6 +239,11 @@ func (c Config) validate() error {
 	}
 	if err := checkURL(c.NotifyNtfy); err != nil {
 		errs = append(errs, fmt.Errorf("notify ntfy %w", err))
+	}
+	for _, name := range c.WatchServices {
+		if strings.ContainsAny(name, " \t/") {
+			errs = append(errs, fmt.Errorf("invalid service name %q in the watch list", name))
+		}
 	}
 	return errors.Join(errs...)
 }
