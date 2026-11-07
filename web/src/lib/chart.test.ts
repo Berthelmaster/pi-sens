@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alignHistories } from './chart'
+import { alignHistories, spreadIndices } from './chart'
 
 describe('alignHistories', () => {
   it('puts histories with the same times side by side', () => {
@@ -42,5 +42,26 @@ describe('alignHistories', () => {
 
   it('handles empty histories', () => {
     expect(alignHistories([[], []], [[], []])).toEqual([[], [], []])
+  })
+})
+
+describe('spreadIndices', () => {
+  it('keeps every row when there are few enough', () => {
+    expect(spreadIndices(3, 5)).toEqual([0, 1, 2])
+    expect(spreadIndices(5, 5)).toEqual([0, 1, 2, 3, 4])
+  })
+
+  it('spreads the rows from the first to the last', () => {
+    expect(spreadIndices(9, 3)).toEqual([0, 4, 8])
+    expect(spreadIndices(100, 4)).toEqual([0, 33, 66, 99])
+  })
+
+  it('keeps only the latest row for a limit of one', () => {
+    expect(spreadIndices(10, 1)).toEqual([9])
+  })
+
+  it('returns nothing for no rows or a limit of zero', () => {
+    expect(spreadIndices(0, 5)).toEqual([])
+    expect(spreadIndices(10, 0)).toEqual([])
   })
 })

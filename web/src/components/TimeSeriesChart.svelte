@@ -24,6 +24,7 @@
     canvasFont,
     resolveColor,
     seriesColor,
+    spreadIndices,
     textWidth,
     withAlpha,
     yRange,
@@ -78,6 +79,16 @@
      * chart is on its own.
      */
     syncKey?: string
+    /**
+     * Offer a "Show as table" toggle that swaps the chart for a table of the
+     * visible series, for screen readers and for reading exact values.
+     */
+    table?: boolean
+    /**
+     * Most rows the table shows. Longer data is thinned to this many rows,
+     * spread evenly from the first sample to the last.
+     */
+    tableRows?: number
   }
 
   let {
@@ -92,7 +103,11 @@
     bands,
     xRange,
     syncKey,
+    table = false,
+    tableRows = 60,
   }: Props = $props()
+
+  const uid = $props.id()
 
   function defaultFormat(value: number): string {
     return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -154,6 +169,20 @@
     flip: boolean
   }
   let hover = $state<Hover | null>(null)
+
+  let showTable = $state(false)
+  // The chart stays mounted behind the table, so turning it back on is
+  // instant and a linked crosshair keeps working.
+  let tableShown = $derived(table && showTable)
+  /** Series the table has a column for: the ones not hidden in the legend. */
+  let tableColumns = $derived(
+    series.flatMap((s, i) =>
+      hidden.has(s.label) ? [] : [{ label: s.label, i }],
+    ),
+  )
+  let tableIndices = $derived(
+    tableShown ? spreadIndices(data[0].length, tableRows) : [],
+  )
 
   // Build the chart. Theme, series and scale changes rebuild it, since the
   // resolved colours are baked into the options; data, size and format
@@ -339,7 +368,16 @@
 </script>
 
 <figure class="chart">
-  <div class="plot" style:min-height="{height}px">
+  {#if table}
+    <div class="toolbar">
+      <label>
+        <input type="checkbox" bind:checked={showTable} />
+        Show as table
+      </label>
+    </div>
+  {/if}
+
+  <div class="plot" hidden={tableShown} style:min-height="{height}px">
     <div
       class="canvas"
       bind:this={el}
@@ -372,6 +410,64 @@
     {/if}
   </div>
 
+  {#if tableShown}
+    <!-- The table scrolls on its own, so it takes focus to be scrolled from
+         the keyboard. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="table-scroll"
+      role="region"
+      aria-labelledby="{uid}-caption"
+      tabindex="0"
+      style:max-height="{height}px"
+    >
+      <table>
+        <caption id="{uid}-caption">
+          {label ?? 'Chart data'}
+          {#if tableIndices.length < data[0].length}
+            <span class="muted">
+              ({tableIndices.length} of {data[0].length} samples, evenly spread)
+            </span>
+          {/if}
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Time</th>
+            {#each tableColumns as c (c.i)}
+              <th class="num" scope="col">{c.label}</th>
+            {/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#if tableColumns.length === 0}
+            <tr>
+              <td class="empty">All series are hidden.</td>
+            </tr>
+          {:else}
+            {#each tableIndices as idx (idx)}
+              <tr>
+                <th scope="row">
+                  <time datetime={new Date(data[0][idx] * 1000).toISOString()}>
+                    {timeFormat.format(new Date(data[0][idx] * 1000))}
+                  </time>
+                </th>
+                {#each tableColumns as c (c.i)}
+                  <td class="num">{valueAt(c.i, idx)}</td>
+                {/each}
+              </tr>
+            {:else}
+              <tr>
+                <td class="empty" colspan={tableColumns.length + 1}>
+                  No samples.
+                </td>
+              </tr>
+            {/each}
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  {/if}
+
   {#if showLegend}
     <figcaption class="legend">
       {#each series as s, i (i)}
@@ -395,8 +491,97 @@
     min-width: 0;
   }
 
+  .toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--space-2);
+    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+  }
+
+  .toolbar label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    cursor: pointer;
+  }
+
+  .toolbar input {
+    margin: 0;
+    accent-color: var(--color-accent);
+  }
+
   .plot {
     position: relative;
+  }
+
+  .table-scroll {
+    overflow: auto;
+    max-width: 100%;
+  }
+
+  .table-scroll:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+
+  caption {
+    padding-bottom: var(--space-2);
+    text-align: left;
+    color: var(--color-text);
+  }
+
+  th,
+  td {
+    padding: var(--space-1) var(--space-2);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  th:first-child,
+  td:first-child {
+    padding-left: 0;
+  }
+
+  th:last-child,
+  td:last-child {
+    padding-right: 0;
+  }
+
+  thead th {
+    /* Stays in view while the rows scroll under it. */
+    position: sticky;
+    top: 0;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  tbody th {
+    font-weight: normal;
+    color: var(--color-text-muted);
+  }
+
+  tbody tr + tr > * {
+    border-top: 1px solid var(--color-border);
+  }
+
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .empty {
+    color: var(--color-text-muted);
   }
 
   .canvas {

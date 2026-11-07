@@ -200,6 +200,7 @@
           min={0}
           max={100}
           label="CPU usage per core, last hour"
+          table
         />
       </Card>
     </div>
@@ -212,6 +213,7 @@
           format={celsius}
           height={180}
           label="CPU temperature, last hour"
+          table
         />
       </Card>
     </div>

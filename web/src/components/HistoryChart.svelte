@@ -61,6 +61,7 @@
       {height}
       {label}
       {syncKey}
+      table
     />
   {:else}
     <div class="placeholder" style:height="{height}px">
