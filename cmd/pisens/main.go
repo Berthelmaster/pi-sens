@@ -74,6 +74,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 			cfg.HistoryRawRetention, cfg.History1mRetention, cfg.History15mRetention),
 		"watch_services", strings.Join(cfg.WatchServices, ","),
 		"process_cmdline", cfg.ProcessCmdline,
+		"net_skip", strings.Join(cfg.NetSkip, ","),
 	)
 	rulesFrom := "built-in"
 	if cfg.AlertsFile != "" {
@@ -88,6 +89,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		return 2
 	}
 	collectors.SetProcessCmdline(cmdline)
+	collectors.SetNetSkip(cfg.NetSkip)
 
 	var serverOpts []server.Option
 	if cfg.AuthEnabled() {

@@ -11,6 +11,8 @@ import (
 // testHash is a bcrypt hash of "pw".
 const testHash = "$2a$10$azHQ.jqYzZIyXkRa.ETdgeauf8sdkH.P0fxNsJ6DnqpKRaQXd7dzG"
 
+var defaultNetSkip = []string{"lo", "veth*", "docker*", "br-*"}
+
 func envFrom(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
@@ -27,6 +29,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: 24 * time.Hour, History1mRetention: 168 * time.Hour, History15mRetention: 2160 * time.Hour,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: 15 * time.Minute,
 				Prometheus:     true,
@@ -54,6 +57,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens", HistoryInterval: 30 * time.Second,
 				HistoryRawRetention: 12 * time.Hour, History1mRetention: 72 * time.Hour, History15mRetention: 720 * time.Hour,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				AlertsFile:     "/etc/pisens/alerts.yaml",
 				NotifyWebhook:  "https://hooks.example.com/pisens?token=abc", NotifyNtfy: "https://ntfy.sh/my-pi",
@@ -73,6 +77,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens", HistoryInterval: time.Minute,
 				HistoryRawRetention: 6 * time.Hour, History1mRetention: 48 * time.Hour, History15mRetention: 8760 * time.Hour,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				AlertsFile:     "rules.yaml",
 				NotifyWebhook:  "http://192.168.1.10:9000/hook", NotifyNtfy: "https://ntfy.example.com/pi",
@@ -104,6 +109,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second,
 				HistoryRawRetention: 2 * time.Hour, History1mRetention: 24 * time.Hour, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				AlertsFile:     "flag.yaml",
 				NotifyWebhook:  "https://env.example.com/hook", NotifyNtfy: "https://ntfy.sh/flag",
@@ -117,6 +123,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				WatchServices:  []string{"ssh", "pisens.service", "nginx"},
@@ -130,6 +137,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				WatchServices:  []string{"cron"},
@@ -142,6 +150,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
@@ -155,6 +164,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
@@ -168,6 +178,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
@@ -179,6 +190,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: ProcessCmdlineOff,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
@@ -191,7 +203,45 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: ProcessCmdlineFull,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "net skip from env",
+			env:  map[string]string{EnvNetSkip: " lo, veth*,,cni*, virbr*,tailscale0 "},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        []string{"lo", "veth*", "cni*", "virbr*", "tailscale0"},
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "net skip flag wins over env",
+			args: []string{"--net-skip", "lo,podman*"},
+			env:  map[string]string{EnvNetSkip: "lo,cni*"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        []string{"lo", "podman*"},
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "empty net skip flag reports every interface",
+			args: []string{"--net-skip="},
+			env:  map[string]string{EnvNetSkip: "lo"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
 			},
@@ -202,6 +252,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 			},
@@ -212,6 +263,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 			},
@@ -223,6 +275,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
 				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
@@ -275,6 +328,9 @@ func TestLoadErrors(t *testing.T) {
 		{name: "path as watched service", env: map[string]string{EnvWatchServices: "/etc/systemd/ssh.service"}},
 		{name: "bad env process cmdline", env: map[string]string{EnvProcessCmdline: "partial"}},
 		{name: "bad flag process cmdline", args: []string{"--process-cmdline", "Full"}},
+		{name: "space in net skip", args: []string{"--net-skip", "lo,veth *"}},
+		{name: "star inside net skip", env: map[string]string{EnvNetSkip: "lo,v*th"}},
+		{name: "path as net skip", env: map[string]string{EnvNetSkip: "/sys/class/net/lo"}},
 		{name: "bad env prometheus", env: map[string]string{EnvPrometheus: "maybe"}},
 		{name: "positional args", args: []string{"extra"}},
 		{name: "auth user without hash", args: []string{"--auth-user", "admin"}},
