@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -39,6 +40,11 @@ const (
 	// DefaultNetSkip leaves out loopback and the veth pairs and bridges
 	// Docker creates.
 	DefaultNetSkip = "lo,veth*,docker*,br-*"
+
+	// DefaultNetQualityTargets are the internet hosts the netquality
+	// collector pings besides the default gateway: Cloudflare and Google DNS.
+	DefaultNetQualityTargets  = "1.1.1.1,8.8.8.8"
+	DefaultNetQualityInterval = 10 * time.Second
 )
 
 // ProcessCmdline values: how much of the process command lines the
@@ -76,6 +82,10 @@ const (
 
 	EnvEnergyPrice    = "PISENS_ENERGY_PRICE"
 	EnvEnergyCurrency = "PISENS_ENERGY_CURRENCY"
+
+	EnvNetQuality         = "PISENS_NETQ"
+	EnvNetQualityTargets  = "PISENS_NETQ_TARGETS"
+	EnvNetQualityInterval = "PISENS_NETQ_INTERVAL"
 
 	EnvPrometheus       = "PISENS_PROMETHEUS"
 	EnvAuthUser         = "PISENS_AUTH_USER"
@@ -127,6 +137,14 @@ type Config struct {
 	// EnergyCurrency is shown next to the cost, e.g. "DKK". Free text, may
 	// be empty.
 	EnergyCurrency string
+	// NetQuality turns on the network quality probes: pings to the default
+	// gateway and NetQualityTargets every NetQualityInterval.
+	NetQuality bool
+	// NetQualityTargets are the internet hosts to ping, IPv4 addresses or
+	// host names. Empty means only the gateway.
+	NetQualityTargets []string
+	// NetQualityInterval is the time between two rounds of pings.
+	NetQualityInterval time.Duration
 	// Prometheus turns on GET /metrics in the Prometheus text format.
 	Prometheus bool
 	// AuthUser and AuthPasswordHash turn on HTTP basic auth for every route
@@ -167,6 +185,9 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 
 		ProcessCmdline: DefaultProcessCmdline,
 
+		NetQuality:         true,
+		NetQualityInterval: DefaultNetQualityInterval,
+
 		Prometheus: true,
 	}
 
@@ -189,6 +210,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		{EnvHistory1mRetention, &cfg.History1mRetention},
 		{EnvHistory15mRetention, &cfg.History15mRetention},
 		{EnvNotifyCooldown, &cfg.NotifyCooldown},
+		{EnvNetQualityInterval, &cfg.NetQualityInterval},
 	}
 	for _, d := range durations {
 		v := getenv(d.env)
@@ -217,6 +239,14 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		}
 	}
 	cfg.EnergyCurrency = getenv(EnvEnergyCurrency)
+	if v := getenv(EnvNetQuality); v != "" {
+		parsed, err := parseOnOff(v)
+		if err != nil {
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: want on or off", EnvNetQuality, v))
+		} else {
+			cfg.NetQuality = parsed
+		}
+	}
 	if v := getenv(EnvPrometheus); v != "" {
 		parsed, err := strconv.ParseBool(v)
 		if err != nil {
@@ -233,6 +263,10 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	netSkip := DefaultNetSkip
 	if v := getenv(EnvNetSkip); v != "" {
 		netSkip = v
+	}
+	netqTargets := DefaultNetQualityTargets
+	if v := getenv(EnvNetQualityTargets); v != "" {
+		netqTargets = v
 	}
 
 	// The environment values become the flag defaults, so an explicit flag wins.
@@ -271,6 +305,12 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"electricity price per kWh, to show what the Pi's energy use costs; 0 for none (env "+EnvEnergyPrice+")")
 	fs.StringVar(&cfg.EnergyCurrency, "energy-currency", cfg.EnergyCurrency,
 		"currency shown with the energy cost, e.g. DKK (env "+EnvEnergyCurrency+")")
+	fs.Var((*onOff)(&cfg.NetQuality), "netq",
+		"ping the gateway and internet hosts to measure latency, jitter and packet loss: on or off (env "+EnvNetQuality+")")
+	fs.StringVar(&netqTargets, "netq-targets", netqTargets,
+		"comma separated internet hosts to ping besides the default gateway, IPv4 addresses or host names (env "+EnvNetQualityTargets+")")
+	fs.DurationVar(&cfg.NetQualityInterval, "netq-interval", cfg.NetQualityInterval,
+		"time between two rounds of network quality pings (env "+EnvNetQualityInterval+")")
 	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
 		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
 	fs.StringVar(&cfg.AuthUser, "auth-user", cfg.AuthUser,
@@ -293,6 +333,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	}
 	cfg.WatchServices = splitList(watch)
 	cfg.NetSkip = splitList(netSkip)
+	cfg.NetQualityTargets = splitList(netqTargets)
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -375,7 +416,63 @@ func (c Config) validate() error {
 			errs = append(errs, fmt.Errorf("invalid network interface %q in the skip list: want a name, or a prefix ending in *", p))
 		}
 	}
+	if c.NetQuality {
+		if c.NetQualityInterval < time.Second {
+			errs = append(errs, fmt.Errorf("network quality interval must be at least 1s, got %s", c.NetQualityInterval))
+		}
+		for _, t := range c.NetQualityTargets {
+			if err := checkNetQualityTarget(t); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
 	return errors.Join(errs...)
+}
+
+// checkNetQualityTarget checks that t is an IPv4 address or a host name.
+func checkNetQualityTarget(t string) error {
+	if addr, err := netip.ParseAddr(t); err == nil {
+		if !addr.Is4() {
+			return fmt.Errorf("invalid network quality target %q: only IPv4 is supported", t)
+		}
+		return nil
+	}
+	if strings.ContainsAny(t, " \t/:@?#") {
+		return fmt.Errorf("invalid network quality target %q: want an IPv4 address or a host name", t)
+	}
+	return nil
+}
+
+// onOff is a flag that takes on or off, as well as anything
+// strconv.ParseBool takes; a bare --flag means on.
+type onOff bool
+
+func (o *onOff) String() string {
+	if o != nil && *o {
+		return "on"
+	}
+	return "off"
+}
+
+func (o *onOff) Set(s string) error {
+	v, err := parseOnOff(s)
+	if err != nil {
+		return errors.New("want on or off")
+	}
+	*o = onOff(v)
+	return nil
+}
+
+func (*onOff) IsBoolFlag() bool { return true }
+
+func parseOnOff(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "on", "yes":
+		return true, nil
+	case "off", "no":
+		return false, nil
+	}
+	return strconv.ParseBool(s)
 }
 
 // checkURL checks that a notification URL, if set, is an absolute http or

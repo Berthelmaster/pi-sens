@@ -131,6 +131,25 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	collectors.SetEnergy(meter, cfg.EnergyPrice, cfg.EnergyCurrency)
 	logger.Info("energy meter", "path", meter.Path(), "price", cfg.EnergyPrice, "currency", cfg.EnergyCurrency)
 
+	// The network quality probes run on their own interval, so a slow
+	// network never holds up a sample; the collector reports the latest round.
+	var netqDone <-chan struct{}
+	if cfg.NetQuality {
+		netqDone = collectors.StartNetQuality(ctx, collectors.NetQualityOptions{
+			Targets:  cfg.NetQualityTargets,
+			Interval: cfg.NetQualityInterval,
+			FS:       os.DirFS("/"),
+			Logger:   logger,
+		})
+	} else {
+		done := make(chan struct{})
+		close(done)
+		netqDone = done
+	}
+	logger.Info("network quality", "enabled", cfg.NetQuality,
+		"targets", strings.Join(append([]string{"gateway"}, cfg.NetQualityTargets...), ","),
+		"interval", cfg.NetQualityInterval.String())
+
 	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
 
 	// Subscribe before the sampler starts so the first snapshot is stored too.
@@ -200,6 +219,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	if merr := meter.Close(); merr != nil {
 		logger.Error("save energy totals", "err", merr)
 	}
+	<-netqDone
 	<-evaluatorDone
 	<-dispatcherDone
 	if werr := <-writerDone; werr != nil {
