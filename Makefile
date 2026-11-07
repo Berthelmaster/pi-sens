@@ -5,7 +5,7 @@ PKG     := ./cmd/pisens
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build build-arm64 web web-check test vet lint run clean
+.PHONY: build build-arm64 web web-check test vet lint shellcheck run clean
 
 ## build: build the frontend and pisens for the host into bin/pisens
 build: web
@@ -38,6 +38,10 @@ vet:
 ## lint: run golangci-lint with .golangci.yml (needs golangci-lint v2 on PATH)
 lint:
 	golangci-lint run ./...
+
+## shellcheck: check the deploy scripts with shellcheck (needs shellcheck on PATH)
+shellcheck:
+	shellcheck deploy/*.sh
 
 ## run: build and run pisens; pass flags with ARGS, e.g. make run ARGS='--listen :9090'
 run: build
