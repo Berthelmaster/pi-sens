@@ -35,6 +35,27 @@ Each card on the Overview page is one component in this folder. The layout shell
 - `seriesHistory(key)` keeps the last five minutes of one series key. Samples without the key are left out.
 - Format values with the helpers in `web/src/lib/format.ts` (`formatBytes`, `formatBitsPerSecond`, `formatPercent`, `formatDuration`, `formatTemp`, `formatHz`). They show `–` for a missing value, so series values can go straight in.
 
+## Component tests
+
+`npm test` runs two Vitest projects: `*.test.ts` files in node for plain logic, and `*.svelte.test.ts` files in jsdom for components. Name a component test `<Component>.svelte.test.ts` next to the component and mount it with `@testing-library/svelte`; the DOM is cleaned up after each test. `components/AlertBanner.svelte.test.ts` is a full example.
+
+- Mock `../lib/live` with plain writable stores so the test sets the data itself and no stream is opened. `vi.mock` is hoisted above the imports, so create the stores inside the factory and import them back from the mocked module:
+
+  ```ts
+  import { snapshot } from '../lib/live'
+
+  vi.mock('../lib/live', async () => {
+    const { writable } = await import('svelte/store')
+    return { snapshot: writable(null) }
+  })
+
+  const live = snapshot as Writable<Snapshot | null>
+  ```
+
+- After changing a store, `await tick()` (from `svelte`) before checking the DOM. `await fireEvent.click(button)` waits for the update itself.
+- Find elements by role and accessible name (`screen.getByRole('button', { name: 'Recent alerts' })`), which also checks the markup is accessible.
+- Shared `$state` modules such as `lib/alertPanel.svelte.ts` keep their values between tests; reset them in `beforeEach`.
+
 ## Widgets
 
 | File                       | Area        | Types file             |

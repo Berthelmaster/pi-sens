@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import { svelteTesting } from '@testing-library/svelte/vite'
 import { defineConfig, type Plugin } from 'vite'
 
 // The Go binary embeds web/dist, so the directory has to exist before the
@@ -29,7 +30,28 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['src/**/*.test.ts'],
-    environment: 'node',
+    // Plain *.test.ts files test logic and run in node. Component tests are
+    // named *.svelte.test.ts and run in jsdom with Svelte's browser build, so
+    // components can be mounted with @testing-library/svelte.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'node',
+          include: ['src/**/*.test.ts'],
+          exclude: ['src/**/*.svelte.test.ts'],
+          environment: 'node',
+        },
+      },
+      {
+        extends: true,
+        plugins: [svelteTesting()],
+        test: {
+          name: 'dom',
+          include: ['src/**/*.svelte.test.ts'],
+          environment: 'jsdom',
+        },
+      },
+    ],
   },
 })
