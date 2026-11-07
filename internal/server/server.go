@@ -9,27 +9,37 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
 // shutdownTimeout bounds how long in-flight requests get to finish on shutdown.
 const shutdownTimeout = 10 * time.Second
 
-// Server serves the pisens HTTP API.
-type Server struct {
-	addr    string
-	version string
-	logger  *slog.Logger
-	mux     *http.ServeMux
+// SnapshotSource provides the latest metrics snapshot. *metrics.Sampler
+// implements it.
+type SnapshotSource interface {
+	Latest() (metrics.Snapshot, bool)
 }
 
-// New creates a server that listens on addr and reports version from the
-// health endpoint.
-func New(addr, version string, logger *slog.Logger) *Server {
+// Server serves the pisens HTTP API.
+type Server struct {
+	addr     string
+	version  string
+	logger   *slog.Logger
+	mux      *http.ServeMux
+	snapshot SnapshotSource
+}
+
+// New creates a server that listens on addr, reports version from the health
+// endpoint and serves metrics from snapshots.
+func New(addr, version string, logger *slog.Logger, snapshots SnapshotSource) *Server {
 	s := &Server{
-		addr:    addr,
-		version: version,
-		logger:  logger,
-		mux:     http.NewServeMux(),
+		addr:     addr,
+		version:  version,
+		logger:   logger,
+		mux:      http.NewServeMux(),
+		snapshot: snapshots,
 	}
 	s.routes()
 	return s
@@ -37,6 +47,7 @@ func New(addr, version string, logger *slog.Logger) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	s.mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 }
 
 // Handler returns the server's root HTTP handler.
@@ -94,6 +105,20 @@ type healthResponse struct {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Version: s.version})
+}
+
+type errorResponse struct {
+	Error string `json:"error"`
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	snap, ok := s.snapshot.Latest()
+	if !ok {
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "no metrics sampled yet"})
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
