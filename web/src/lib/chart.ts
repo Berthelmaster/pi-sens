@@ -102,3 +102,19 @@ export function alignHistories(
   })
   return [times, ...columns]
 }
+
+/**
+ * Indices of at most `max` rows out of `count`, spread evenly from the first
+ * to the last so a long range keeps its shape. Fewer rows than `max` come
+ * back whole.
+ */
+export function spreadIndices(count: number, max: number): number[] {
+  const n = Math.max(0, Math.floor(count))
+  const m = Math.max(0, Math.floor(max))
+  if (n <= m) return Array.from({ length: n }, (_, i) => i)
+  if (m === 0) return []
+  if (m === 1) return [n - 1]
+  return Array.from({ length: m }, (_, i) =>
+    Math.round((i * (n - 1)) / (m - 1)),
+  )
+}

@@ -1,4 +1,4 @@
-import { render } from '@testing-library/svelte'
+import { fireEvent, render, screen } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import type uPlot from 'uplot'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -92,5 +92,65 @@ describe('TimeSeriesChart', () => {
 
     await moveCursor(built[0], -10)
     expect(tooltip()).toBeNull()
+  })
+
+  it('has no table toggle unless asked for', () => {
+    render(TimeSeriesChart, { data, series })
+    expect(screen.queryByLabelText('Show as table')).toBeNull()
+  })
+
+  it('shows the visible series as a table', async () => {
+    const { container } = render(TimeSeriesChart, {
+      data: [
+        [1000, 1060, 1120],
+        [10, 20, 30],
+        [1, null, 3],
+      ],
+      series: [{ label: 'CPU' }, { label: 'GPU' }],
+      format: (v: number) => `${v} %`,
+      label: 'Usage, last hour',
+      table: true,
+    })
+    expect(container.querySelector('table')).toBeNull()
+
+    await fireEvent.click(screen.getByLabelText('Show as table'))
+    const table = screen.getByRole('table', { name: /Usage, last hour/ })
+    expect(container.querySelector('.plot')?.hasAttribute('hidden')).toBe(true)
+    expect(
+      [...table.querySelectorAll('thead th')].map((th) => th.textContent),
+    ).toEqual(['Time', 'CPU', 'GPU'])
+    const rows = [...table.querySelectorAll('tbody tr')].map((tr) =>
+      [...tr.querySelectorAll('td')].map((td) => td.textContent),
+    )
+    expect(rows).toEqual([
+      ['10 %', '1 %'],
+      ['20 %', '–'],
+      ['30 %', '3 %'],
+    ])
+
+    // A series hidden from the legend loses its column.
+    await fireEvent.click(screen.getByRole('button', { name: 'GPU' }))
+    expect(
+      [...table.querySelectorAll('thead th')].map((th) => th.textContent),
+    ).toEqual(['Time', 'CPU'])
+  })
+
+  it('thins long data to the row limit', async () => {
+    const times = Array.from({ length: 100 }, (_, i) => 1000 + i * 60)
+    render(TimeSeriesChart, {
+      data: [times, times.map((_, i) => i)],
+      series,
+      label: 'CPU',
+      table: true,
+      tableRows: 5,
+    })
+    await fireEvent.click(screen.getByLabelText('Show as table'))
+    const table = screen.getByRole('table')
+    expect(table.querySelector('caption')?.textContent).toMatch(
+      /5 of 100 samples/,
+    )
+    expect(
+      [...table.querySelectorAll('tbody td')].map((td) => td.textContent),
+    ).toEqual(['0', '25', '50', '74', '99'])
   })
 })
