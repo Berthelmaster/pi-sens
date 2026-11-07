@@ -212,6 +212,33 @@ func TestDownsampleSkipsGaps(t *testing.T) {
 	checkBuckets(t, s, "samples_1m", map[string][]bucket{"a": {{years, 4, 4, 4, 1}, {0, 1, 1, 1, 1}}})
 }
 
+func TestDownsampleClockSetBack(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	clock := &fakeClock{now: q0.Add(time.Hour)}
+	d := newTestDownsampler(t, s, clock, longRetention, 10*time.Second)
+
+	// A run while the clock is an hour ahead marks both levels done up to
+	// then. NTP sets the clock back and samples arrive every 10s, with a
+	// run every minute.
+	runOnce(t, d)
+	for i := range 20*6 + 1 {
+		clock.now = q0.Add(time.Duration(i) * 10 * time.Second)
+		insertAt(t, s, "a", map[time.Duration]float64{clock.now.Sub(q0): 1})
+		if i%6 == 0 {
+			runOnce(t, d)
+		}
+	}
+
+	// At 20:00 with a 10s delay, the minutes up to 19:00 are complete, and
+	// so is the first quarter.
+	var want1m []bucket
+	for m := range 19 {
+		want1m = append(want1m, bucket{time.Duration(m) * time.Minute, 1, 1, 1, 6})
+	}
+	checkBuckets(t, s, "samples_1m", map[string][]bucket{"a": want1m})
+	checkBuckets(t, s, "samples_15m", map[string][]bucket{"a": {{0, 1, 1, 1, 90}}})
+}
+
 // count returns the number of rows in table and the oldest ts as an offset
 // from q0.
 func count(t *testing.T, s *Store, table string) (int, time.Duration) {

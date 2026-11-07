@@ -21,6 +21,11 @@ package history
 // the clock was set back) are noticed by Store.Insert, and the next run
 // aggregates those buckets, and the 15 minute buckets above them, again.
 //
+// If the clock was ahead and is set back (a Pi without an RTC that ran
+// before NTP synced), done_until is past the last completed bucket. A run
+// then lowers it to that bucket's end, so the buckets in between are
+// aggregated as they complete instead of being skipped for good.
+//
 // Retention then deletes rows older than their table's retention, per series
 // in batches of deleteBatch rows, so no single statement holds the write lock
 // for long. Rows the next level has not aggregated yet are kept.
@@ -195,6 +200,17 @@ func (d *Downsampler) runOnce(ctx context.Context, written int64, hasWritten boo
 		if !ok {
 			from = 0 // never ran: start at the oldest source row
 		}
+		// A mark past the last completed bucket means the clock was ahead
+		// and has been set back. Resume from end, or the buckets between end
+		// and the mark would never be aggregated once they complete.
+		if from > end {
+			if err := lowerDoneUntil(ctx, d.store.db, lv.table, end); err != nil {
+				return err
+			}
+			d.opts.Logger.Warn("history rollup was ahead of the clock, resuming",
+				"table", lv.table, "done_until", time.Unix(from, 0), "now", time.Unix(end, 0))
+			from = end
+		}
 		// Aggregate again the buckets that got new source rows, but not those
 		// whose source rows retention may already have deleted.
 		if hasChanged {
@@ -336,6 +352,13 @@ func doneUntil(ctx context.Context, db *sql.DB, table string) (int64, bool, erro
 func setDoneUntil(ctx context.Context, db execer, table string, ts int64) error {
 	_, err := db.ExecContext(ctx, `INSERT INTO rollup_state (name, done_until) VALUES (?1, ?2)
 		ON CONFLICT (name) DO UPDATE SET done_until = MAX(done_until, excluded.done_until)`, table, ts)
+	return err
+}
+
+// lowerDoneUntil moves the mark of table back to ts if it is past it. Only
+// runOnce calls it, for a mark the clock has fallen behind.
+func lowerDoneUntil(ctx context.Context, db execer, table string, ts int64) error {
+	_, err := db.ExecContext(ctx, "UPDATE rollup_state SET done_until = ?2 WHERE name = ?1 AND done_until > ?2", table, ts)
 	return err
 }
 
