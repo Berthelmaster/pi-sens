@@ -1,0 +1,6 @@
+node_modules/
+
+# Build output is embedded into the Go binary; only the placeholder is tracked
+# so go build works before the frontend has been built.
+/dist/*
+!/dist/.gitkeep

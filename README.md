@@ -1,17 +1,21 @@
 # pi-sens
 
-A small system monitor for the Raspberry Pi, shipped as a single Go binary.
+A small system monitor for the Raspberry Pi, shipped as a single Go binary with the web dashboard built in.
 
 ## Build and run
 
-You need Go 1.23 or newer and `make`.
+You need Go 1.23 or newer, Node 22 with npm, and `make`.
 
 ```sh
-make build          # host binary in bin/pisens
-make build-arm64    # static linux/arm64 binary for the Pi in bin/pisens-linux-arm64
+make build          # frontend + host binary in bin/pisens
+make build-arm64    # frontend + static linux/arm64 binary for the Pi in bin/pisens-linux-arm64
+make web            # only build the frontend into web/dist (npm ci + npm run build)
+make web-check      # svelte-check, tsc and prettier --check on the frontend
 make test           # go vet + go test
 make run            # build and run; pass flags with ARGS='--listen :9090'
 ```
+
+The frontend in `web/` is Svelte 5 + Vite + TypeScript. `make build` builds it into `web/dist` and the Go binary embeds that directory, so the binary serves the dashboard at `/`. A plain `go build ./...` also works without Node: it embeds whatever is in `web/dist`, which is just a placeholder until the frontend has been built, and `/` then answers 503.
 
 The version reported by the binary comes from `git describe`. Override it with `make build VERSION=1.0.0`.
 
@@ -23,7 +27,21 @@ curl localhost:8080/api/health
 # {"status":"ok","version":"..."}
 ```
 
+Open http://localhost:8080/ for the dashboard.
+
 To run on the Pi, copy `bin/pisens-linux-arm64` over and start it. It has no runtime dependencies.
+
+### Frontend development
+
+Run the backend and the Vite dev server side by side. Vite proxies `/api` to the backend on `localhost:8080` and reloads the page as you edit.
+
+```sh
+make run                    # terminal 1: backend on :8080
+cd web && npm ci            # terminal 2, first time only
+npm run dev                 # dev server on http://localhost:5173
+```
+
+Before committing frontend changes run `npm run check` (svelte-check, tsc and Prettier) in `web/`. `npm run format` fixes formatting.
 
 ### Configuration
 
@@ -42,3 +60,5 @@ Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT o
 | Method | Path          | Response                              |
 |--------|---------------|---------------------------------------|
 | GET    | `/api/health` | `{"status":"ok","version":"<version>"}` |
+
+Any other `GET` path serves the web UI. Files in `web/dist` are served as they are, and paths without a file extension fall back to `index.html` so client-side routes like `/history` work as deep links. Hashed files under `/assets/` are cached for a year; everything else is sent with `Cache-Control: no-cache`. Unknown `/api/...` paths return a JSON 404.

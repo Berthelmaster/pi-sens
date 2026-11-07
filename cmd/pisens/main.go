@@ -12,6 +12,7 @@ import (
 
 	"github.com/Berthelmaster/pi-sens/internal/config"
 	"github.com/Berthelmaster/pi-sens/internal/server"
+	"github.com/Berthelmaster/pi-sens/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -46,7 +47,7 @@ func run() int {
 		"data_dir", cfg.DataDir,
 	)
 
-	srv := server.New(cfg.Listen, version, logger)
+	srv := server.New(cfg.Listen, version, web.Dist(), logger)
 	if err := srv.Run(ctx); err != nil {
 		logger.Error("server failed", "err", err)
 		return 1

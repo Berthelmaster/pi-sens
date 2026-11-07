@@ -17,7 +17,7 @@ func discardLogger() *slog.Logger {
 }
 
 func TestHealth(t *testing.T) {
-	s := New(":0", "1.2.3", discardLogger())
+	s := New(":0", "1.2.3", testUI, discardLogger())
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
@@ -40,7 +40,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestHealthRejectsOtherMethods(t *testing.T) {
-	s := New(":0", "dev", discardLogger())
+	s := New(":0", "dev", testUI, discardLogger())
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/health", nil))
@@ -55,7 +55,7 @@ func TestServeShutsDownOnCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(ln.Addr().String(), "dev", discardLogger())
+	s := New(ln.Addr().String(), "dev", testUI, discardLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

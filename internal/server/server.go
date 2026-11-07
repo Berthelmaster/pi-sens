@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,20 +15,23 @@ import (
 // shutdownTimeout bounds how long in-flight requests get to finish on shutdown.
 const shutdownTimeout = 10 * time.Second
 
-// Server serves the pisens HTTP API.
+// Server serves the pisens HTTP API and the web UI.
 type Server struct {
 	addr    string
 	version string
+	ui      fs.FS
 	logger  *slog.Logger
 	mux     *http.ServeMux
 }
 
-// New creates a server that listens on addr and reports version from the
-// health endpoint.
-func New(addr, version string, logger *slog.Logger) *Server {
+// New creates a server that listens on addr, reports version from the health
+// endpoint and serves the single-page app in ui at /. ui is normally
+// web.Dist().
+func New(addr, version string, ui fs.FS, logger *slog.Logger) *Server {
 	s := &Server{
 		addr:    addr,
 		version: version,
+		ui:      ui,
 		logger:  logger,
 		mux:     http.NewServeMux(),
 	}
@@ -37,6 +41,8 @@ func New(addr, version string, logger *slog.Logger) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	// Everything else, including unknown /api paths, goes to the SPA handler.
+	s.mux.Handle("GET /", spaHandler{ui: s.ui, logger: s.logger})
 }
 
 // Handler returns the server's root HTTP handler.
@@ -90,6 +96,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 type healthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
+}
+
+type errorResponse struct {
+	Error string `json:"error"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
