@@ -7,7 +7,6 @@
   import ThemeToggle from './components/ThemeToggle.svelte'
   import { alerts, snapshot } from './lib/live'
   import { followLink, router } from './lib/router.svelte'
-  import ChartsDemo from './pages/ChartsDemo.svelte'
   import History from './pages/History.svelte'
   import NotFound from './pages/NotFound.svelte'
   import Overview from './pages/Overview.svelte'
@@ -20,21 +19,35 @@
     page: Component
   }
 
+  interface LazyRoute {
+    path: string
+    label: string
+    load: () => Promise<{ default: Component }>
+  }
+
   const routes: Route[] = [
     { path: '/', label: 'Overview', page: Overview },
     { path: '/history', label: 'History', page: History },
   ]
 
-  // Dev-only pages: reachable by URL under `npm run dev`, left out of the nav
-  // and dropped from production builds.
-  const devRoutes: Route[] = import.meta.env.DEV
-    ? [{ path: '/dev/charts', label: 'Charts', page: ChartsDemo }]
+  // Dev-only pages: reachable by URL under `npm run dev`, left out of the nav.
+  // They are loaded with a dynamic import inside the DEV branch, so production
+  // builds drop the branch and never emit the page, its components or its CSS.
+  const devRoutes: LazyRoute[] = import.meta.env.DEV
+    ? [
+        {
+          path: '/dev/charts',
+          label: 'Charts',
+          load: () => import('./pages/ChartsDemo.svelte'),
+        },
+      ]
     : []
 
-  let active = $derived(
+  let active = $derived<Route | LazyRoute | undefined>(
     [...routes, ...devRoutes].find((r) => r.path === router.path),
   )
-  let Page = $derived(active?.page ?? NotFound)
+  let Page = $derived(active && 'page' in active ? active.page : NotFound)
+  let lazy = $derived(active && 'load' in active ? active.load() : undefined)
 
   let hostname = $derived(hostnameOf($snapshot))
   let critical = $derived(hasCritical($alerts?.firing ?? []))
@@ -79,7 +92,13 @@
 <AlertBanner />
 
 <main>
-  <Page />
+  {#if lazy}
+    {#await lazy then { default: LazyPage }}
+      <LazyPage />
+    {/await}
+  {:else}
+    <Page />
+  {/if}
 </main>
 
 <style>
