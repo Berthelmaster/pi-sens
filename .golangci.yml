@@ -10,3 +10,10 @@ linters:
     # bodies we only read from.
     presets:
       - std-error-handling
+
+# golangci-lint run also fails on Go files that gofmt would change, the way
+# npm run check does for Prettier on the frontend. Run `make fmt` (golangci-lint
+# fmt) to fix them.
+formatters:
+  enable:
+    - gofmt

@@ -20,7 +20,8 @@ make build-arm64    # frontend + static linux/arm64 binary for the Pi in bin/pis
 make web            # only build the frontend into web/dist (npm ci + npm run build)
 make web-check      # svelte-check, tsc, prettier --check and Vitest on the frontend
 make test           # go vet + go test
-make lint           # golangci-lint (v2, config in .golangci.yml)
+make lint           # golangci-lint (v2, config in .golangci.yml), including gofmt
+make fmt            # format the Go code with gofmt through golangci-lint
 make shellcheck     # shellcheck on the deploy scripts and their tests
 make test-deploy    # test deploy/deploy.sh with stub systemctl and curl
 make run            # build and run; pass flags with ARGS='--listen :9090'
@@ -450,13 +451,13 @@ To go back to the previous binary by hand, run `sudo /usr/local/sbin/pisens-depl
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request to `main`:
 
 - Frontend: `npm ci`, `npm run check` and `npm run build` in `web/`
-- Go: `go vet`, `golangci-lint` and `go test -race` on every package outside `web/node_modules` (`make -s go-packages` prints the list)
+- Go: `go vet`, `golangci-lint` (which fails on Go code that is not gofmt-formatted) and `go test -race` on every package outside `web/node_modules` (`make -s go-packages` prints the list)
 - Shell scripts: `shellcheck` on `deploy/`, and the `deploy/deploy.sh` tests (`deploy/tests/`) with stub `systemctl` and `curl`
 - A static `linux/arm64` build with the frontend embedded, uploaded as the `pisens-linux-arm64` artifact on the run page
 
 A new push to a pull request cancels that pull request's run in progress. Runs on `main` are never cancelled, so two quick merges each get their own result and artifact.
 
-To match the lint steps locally, install the golangci-lint version pinned in the workflow and run `make lint`, and install shellcheck (`apt install shellcheck`) and run `make shellcheck`. `make test-deploy` runs the `deploy.sh` tests; they need neither root nor systemd.
+To match the lint steps locally, install the golangci-lint version pinned in the workflow and run `make lint` (`make fmt` fixes formatting), and install shellcheck (`apt install shellcheck`) and run `make shellcheck`. `make test-deploy` runs the `deploy.sh` tests; they need neither root nor systemd.
 
 ## Releases
 
