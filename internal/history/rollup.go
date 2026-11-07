@@ -23,7 +23,9 @@ package history
 //
 // Retention then deletes rows older than their table's retention, per series
 // in batches of deleteBatch rows, so no single statement holds the write lock
-// for long. Rows the next level has not aggregated yet are kept.
+// for long. Rows the next level has not aggregated yet are kept. A series
+// with no rows left in any table, a key that is no longer reported, is then
+// deleted, and gets a new row if it is ever written again.
 //
 // There is no PRAGMA incremental_vacuum. In steady state retention deletes
 // about as many rows a minute as the writer adds, and SQLite reuses the freed
@@ -227,6 +229,14 @@ func (d *Downsampler) runOnce(ctx context.Context, written int64, hasWritten boo
 		if n > 0 {
 			d.opts.Logger.Debug("history rows expired", "table", c.table, "rows", n)
 		}
+	}
+
+	dropped, err := d.store.dropEmptySeries(ctx)
+	if err != nil {
+		return fmt.Errorf("drop empty series: %w", err)
+	}
+	if len(dropped) > 0 {
+		d.opts.Logger.Debug("history series dropped", "keys", dropped)
 	}
 	return nil
 }

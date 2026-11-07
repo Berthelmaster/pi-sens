@@ -304,6 +304,58 @@ func TestRetentionKeepsUnaggregatedRows(t *testing.T) {
 	}
 }
 
+func TestRetentionDropsExpiredSeries(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	clock := &fakeClock{now: q0.Add(30 * time.Minute)}
+	ret := Retention{Raw: time.Hour, Minute: 2 * time.Hour, Quarter: 4 * time.Hour}
+	d := newTestDownsampler(t, s, clock, ret, 0)
+	ctx := context.Background()
+	h := time.Hour
+
+	insertAt(t, s, "gone", map[time.Duration]float64{0: 1})
+	insertAt(t, s, "kept", map[time.Duration]float64{0: 2, 5*h - time.Minute: 3})
+	runOnce(t, d)
+	if keys, err := s.SeriesKeys(ctx, ""); err != nil || !reflect.DeepEqual(keys, []string{"gone", "kept"}) {
+		t.Fatalf("SeriesKeys() = %v, %v; want [gone kept] while gone still has rows", keys, err)
+	}
+
+	// Five hours on, every window has passed the only sample of gone.
+	clock.now = q0.Add(5 * h)
+	runOnce(t, d)
+	if keys, err := s.SeriesKeys(ctx, ""); err != nil || !reflect.DeepEqual(keys, []string{"kept"}) {
+		t.Errorf("SeriesKeys() = %v, %v; want [kept]", keys, err)
+	}
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM series WHERE key = 'gone'").Scan(&n); err != nil || n != 0 {
+		t.Errorf("series rows for gone = %d, %v; want 0", n, err)
+	}
+	s.mu.Lock()
+	_, cached := s.ids["gone"]
+	s.mu.Unlock()
+	if cached {
+		t.Error("gone is still in Store.ids")
+	}
+
+	// The key comes back: it gets a new row and is stored, downsampled and
+	// queried like any other.
+	insertAt(t, s, "gone", map[time.Duration]float64{5*h + 10*time.Second: 4})
+	clock.now = q0.Add(5*h + 2*time.Minute)
+	runOnce(t, d)
+	if keys, err := s.SeriesKeys(ctx, ""); err != nil || !reflect.DeepEqual(keys, []string{"gone", "kept"}) {
+		t.Errorf("SeriesKeys() = %v, %v; want [gone kept] after gone came back", keys, err)
+	}
+	res, err := s.Query(ctx, Query{Keys: []string{"gone"}, From: q0.Add(5 * h), To: q0.Add(5*h + time.Minute), Points: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Series["gone"]; got == nil || !reflect.DeepEqual(got.Avg, []float64{4}) {
+		t.Errorf("Query(gone) = %+v, want the single value 4", got)
+	}
+	if got := readBuckets(t, s, "samples_1m")["gone"]; !reflect.DeepEqual(got, []bucket{{5 * h, 4, 4, 4, 1}}) {
+		t.Errorf("samples_1m of gone = %v, want one bucket at +5h", got)
+	}
+}
+
 // TestQueriesUseIndex guards the queries the job runs every minute against
 // scanning a whole sample table.
 func TestQueriesUseIndex(t *testing.T) {
@@ -312,6 +364,7 @@ func TestQueriesUseIndex(t *testing.T) {
 		`DELETE FROM samples_raw WHERE series_id = ?1 AND ts IN (
 			SELECT ts FROM samples_raw WHERE series_id = ?1 AND ts < ?2 ORDER BY ts LIMIT ?3)`,
 		`SELECT MIN((SELECT MIN(ts) FROM samples_raw WHERE series_id = s.id AND ts >= ?1)) FROM series s`,
+		dropEmptySeries,
 	}
 	for _, lv := range levels {
 		queries = append(queries, lv.insert)

@@ -166,8 +166,9 @@ func (s *Store) querySeries(ctx context.Context, src source, key string, from, t
 	return ser, rows.Err()
 }
 
-// SeriesKeys returns the keys of every series ever stored that start with
-// prefix, sorted. An empty prefix returns them all.
+// SeriesKeys returns the keys of every series with stored rows that start
+// with prefix, sorted. A series is listed until retention has expired all
+// of its rows. An empty prefix returns them all.
 func (s *Store) SeriesKeys(ctx context.Context, prefix string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT key FROM series WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key", prefix)
