@@ -57,8 +57,23 @@ Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT o
 
 ### API
 
-| Method | Path          | Response                              |
-|--------|---------------|---------------------------------------|
-| GET    | `/api/health` | `{"status":"ok","version":"<version>"}` |
+| Method | Path           | Response                              |
+|--------|----------------|---------------------------------------|
+| GET    | `/api/health`  | `{"status":"ok","version":"<version>"}` |
+| GET    | `/api/metrics` | Latest metrics snapshot (503 until the first sample) |
 
 Any other `GET` path serves the web UI. Files in `web/dist` are served as they are, and paths without a file extension fall back to `index.html` so client-side routes like `/history` work as deep links. Hashed files under `/assets/` are cached for a year; everything else is sent with `Cache-Control: no-cache`. Unknown `/api/...` paths return a JSON 404.
+
+A snapshot looks like this. Each collector has its own section; a collector that fails shows `{"error": "..."}` instead and the others are unaffected. Series keys are `area.thing_unit`.
+
+```json
+{
+  "timestamp": "2026-11-07T09:21:22.08Z",
+  "collectors": { "uptime": { "seconds": 334893.67, "boot_time": "2026-11-03T12:19:48Z" } },
+  "series": { "system.uptime_s": 334893.67 }
+}
+```
+
+### Adding a collector
+
+Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions and `uptime.go` for a reference implementation.

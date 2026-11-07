@@ -10,7 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	_ "github.com/Berthelmaster/pi-sens/internal/collectors" // registers the collectors
 	"github.com/Berthelmaster/pi-sens/internal/config"
+	"github.com/Berthelmaster/pi-sens/internal/metrics"
 	"github.com/Berthelmaster/pi-sens/internal/server"
 	"github.com/Berthelmaster/pi-sens/web"
 )
@@ -47,8 +49,17 @@ func run() int {
 		"data_dir", cfg.DataDir,
 	)
 
-	srv := server.New(cfg.Listen, version, web.Dist(), logger)
-	if err := srv.Run(ctx); err != nil {
+	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
+	samplerDone := make(chan error, 1)
+	go func() { samplerDone <- sampler.Run(ctx) }()
+
+	srv := server.New(cfg.Listen, version, web.Dist(), logger, sampler)
+	err = srv.Run(ctx)
+	stop() // stop the sampler too if the server failed on its own
+	if serr := <-samplerDone; serr != nil {
+		logger.Error("sampler failed", "err", serr)
+	}
+	if err != nil {
 		logger.Error("server failed", "err", err)
 		return 1
 	}
