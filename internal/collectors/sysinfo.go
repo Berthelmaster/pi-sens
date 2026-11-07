@@ -63,6 +63,14 @@ type boardInfo struct {
 	// TotalRAMBytes is MemTotal: the RAM the kernel can use, a little under
 	// what is fitted.
 	TotalRAMBytes uint64 `json:"total_ram_bytes,omitempty"`
+
+	// Decoded from a new-style revision code; see decodeRevision. Each is
+	// left out for old-style codes and for values the docs do not list.
+	Type           string `json:"type,omitempty"`             // board type, e.g. "5", "4B", "Zero 2 W"
+	Processor      string `json:"processor,omitempty"`        // SoC, e.g. "BCM2712"
+	Manufacturer   string `json:"manufacturer,omitempty"`     // e.g. "Sony UK"
+	FittedRAMBytes uint64 `json:"fitted_ram_bytes,omitempty"` // RAM on the board, e.g. 8 GiB
+	PCBRevision    string `json:"pcb_revision,omitempty"`     // e.g. "1.4"
 }
 
 func (*sysinfo) Name() string { return "sysinfo" }
@@ -306,6 +314,7 @@ func readBoard(fsys fs.FS) (boardInfo, error) {
 			return bi, err
 		}
 	}
+	decodeRevision(&bi)
 
 	info, err := readMeminfo(fsys)
 	switch {
@@ -315,6 +324,53 @@ func readBoard(fsys fs.FS) (boardInfo, error) {
 		return bi, err
 	}
 	return bi, nil
+}
+
+// Lookup tables for new-style revision codes, indexed by the field's value.
+// Empty entries are values the docs do not assign.
+var (
+	revisionTypes = []string{
+		0x00: "A", 0x01: "B", 0x02: "A+", 0x03: "B+", 0x04: "2B", 0x05: "Alpha",
+		0x06: "CM1", 0x08: "3B", 0x09: "Zero", 0x0a: "CM3", 0x0c: "Zero W",
+		0x0d: "3B+", 0x0e: "3A+", 0x10: "CM3+", 0x11: "4B", 0x12: "Zero 2 W",
+		0x13: "400", 0x14: "CM4", 0x15: "CM4S", 0x17: "5", 0x18: "CM5",
+		0x19: "500", 0x1a: "CM5 Lite",
+	}
+	revisionProcessors    = []string{"BCM2835", "BCM2836", "BCM2837", "BCM2711", "BCM2712"}
+	revisionManufacturers = []string{"Sony UK", "Egoman", "Embest", "Sony Japan", "Embest", "Stadium"}
+)
+
+// revisionMemorySizes is the highest memory-size value the docs list: 16 GB.
+const revisionMemorySizes = 6
+
+// decodeRevision fills in the fields packed into a new-style revision code,
+// as documented at
+// https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#raspberry-pi-revision-codes
+//
+//	NOQu uuWu FMMM CCCC PPPP TTTT TTTT RRRR
+//
+// Bit 23 (F) marks the new style. Old-style codes (the original Pi 1 and
+// Zero era, e.g. "000e") are an opaque lookup and are left undecoded; so are
+// codes that do not parse. The overvoltage, OTP and warranty flags in the top
+// byte are ignored.
+func decodeRevision(bi *boardInfo) {
+	code, err := strconv.ParseUint(bi.Revision, 16, 32)
+	if err != nil || code&(1<<23) == 0 {
+		return
+	}
+	lookup := func(table []string, i uint64) string {
+		if i < uint64(len(table)) {
+			return table[i]
+		}
+		return ""
+	}
+	if mem := code >> 20 & 0x7; mem <= revisionMemorySizes {
+		bi.FittedRAMBytes = 256 << 20 << mem
+	}
+	bi.Manufacturer = lookup(revisionManufacturers, code>>16&0xf)
+	bi.Processor = lookup(revisionProcessors, code>>12&0xf)
+	bi.Type = lookup(revisionTypes, code>>4&0xff)
+	bi.PCBRevision = fmt.Sprintf("1.%d", code&0xf)
 }
 
 // readCPUInfoBoard returns the Model, Serial and Revision lines of

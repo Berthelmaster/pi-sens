@@ -59,10 +59,15 @@ func TestSysinfoPi5(t *testing.T) {
 		Arch:     "aarch64",
 		OS:       "Debian GNU/Linux 13 (trixie)",
 		Board: boardInfo{
-			Model:         "Raspberry Pi 5 Model B Rev 1.0", // trailing NUL stripped
-			Serial:        "6c1f0a3e9b52d8e4",
-			Revision:      "d04170",
-			TotalRAMBytes: 8255824 * kB,
+			Model:          "Raspberry Pi 5 Model B Rev 1.0", // trailing NUL stripped
+			Serial:         "6c1f0a3e9b52d8e4",
+			Revision:       "d04170",
+			TotalRAMBytes:  8255824 * kB,
+			Type:           "5",
+			Processor:      "BCM2712",
+			Manufacturer:   "Sony UK",
+			FittedRAMBytes: 8 << 30,
+			PCBRevision:    "1.0",
 		},
 		BootTime: time.Date(2026, 11, 3, 9, 37, 52, 0, time.UTC), // btime 1793698672
 		UptimeS:  354127.42,
@@ -102,7 +107,7 @@ func TestSysinfoNonPi(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"model"`, `"serial"`, `"revision"`, `"users"`} {
+	for _, key := range []string{`"model"`, `"serial"`, `"revision"`, `"type"`, `"processor"`, `"manufacturer"`, `"fitted_ram_bytes"`, `"pcb_revision"`, `"users"`} {
 		if strings.Contains(string(b), key) {
 			t.Errorf("Data = %s, want no %s", b, key)
 		}
@@ -129,7 +134,10 @@ func TestSysinfoFallbacks(t *testing.T) {
 	if data.OS != "Alpine Linux 3.20" {
 		t.Errorf("OS = %q, want NAME and VERSION", data.OS)
 	}
-	wantBoard := boardInfo{Model: "Raspberry Pi 4 Model B Rev 1.4", Serial: "00000000aabbccdd", Revision: "c03114"}
+	wantBoard := boardInfo{
+		Model: "Raspberry Pi 4 Model B Rev 1.4", Serial: "00000000aabbccdd", Revision: "c03114",
+		Type: "4B", Processor: "BCM2711", Manufacturer: "Sony UK", FittedRAMBytes: 4 << 30, PCBRevision: "1.4",
+	}
 	if data.Board != wantBoard {
 		t.Errorf("Board = %+v, want %+v", data.Board, wantBoard)
 	}
@@ -138,6 +146,39 @@ func TestSysinfoFallbacks(t *testing.T) {
 	}
 	if res.Series["system.uptime_s"] != 100.5 || res.Series["system.procs"] != 1 {
 		t.Errorf("Series = %v", res.Series)
+	}
+}
+
+func TestDecodeRevision(t *testing.T) {
+	tests := []struct {
+		code string
+		want boardInfo
+	}{
+		{"d04170", boardInfo{Type: "5", Processor: "BCM2712", Manufacturer: "Sony UK", FittedRAMBytes: 8 << 30, PCBRevision: "1.0"}},
+		{"c03114", boardInfo{Type: "4B", Processor: "BCM2711", Manufacturer: "Sony UK", FittedRAMBytes: 4 << 30, PCBRevision: "1.4"}},
+		{"a02082", boardInfo{Type: "3B", Processor: "BCM2837", Manufacturer: "Sony UK", FittedRAMBytes: 1 << 30, PCBRevision: "1.2"}},
+		{"902120", boardInfo{Type: "Zero 2 W", Processor: "BCM2837", Manufacturer: "Sony UK", FittedRAMBytes: 512 << 20, PCBRevision: "1.0"}},
+		{"a22042", boardInfo{Type: "2B", Processor: "BCM2837", Manufacturer: "Embest", FittedRAMBytes: 1 << 30, PCBRevision: "1.2"}},
+		// Warranty bit 25 set by overclocking: still decoded.
+		{"2a02082", boardInfo{Type: "3B", Processor: "BCM2837", Manufacturer: "Sony UK", FittedRAMBytes: 1 << 30, PCBRevision: "1.2"}},
+		// Values the docs do not list stay empty: memory 7, manufacturer 9,
+		// processor 9, type 0xff.
+		{"f99ff1", boardInfo{PCBRevision: "1.1"}},
+		// Old style (Pi 1 Model B rev 2.0, 512 MB): not decoded.
+		{"000e", boardInfo{}},
+		{"1000002", boardInfo{}}, // old style with the warranty bit
+		{"", boardInfo{}},
+		{"not-hex", boardInfo{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			bi := boardInfo{Revision: tt.code}
+			decodeRevision(&bi)
+			tt.want.Revision = tt.code
+			if bi != tt.want {
+				t.Errorf("decodeRevision(%q) = %+v, want %+v", tt.code, bi, tt.want)
+			}
+		})
 	}
 }
 
