@@ -162,7 +162,7 @@ curl -N localhost:8080/api/stream
 
 - `series` is a comma separated list and may also be repeated. A key without data in the range comes back with empty arrays.
 - `to` defaults to now, `points` to 500 (2 to 5000 allowed).
-- The range picks the table: raw samples up to 6 hours, 1 minute rollups up to 7 days, 15 minute rollups beyond. Rollup rows are only written once their bucket is complete, so the newest few minutes of a longer range are missing until then.
+- The range picks the table: raw samples up to 6 hours, 1 minute rollups up to 7 days, 15 minute rollups beyond. If `from` is older than that table's retention (`PISENS_HISTORY_RAW_RETENTION`, `PISENS_HISTORY_1M_RETENTION`), the next coarser table is read instead, so a short range in the past still has data. Rollup rows are only written once their bucket is complete, so the newest few minutes of a longer range are missing until then.
 - The rows are grouped into buckets of `step` seconds, a multiple of the table's resolution, so every series has at most `points` points. `t` is the start of each bucket. Buckets start at multiples of `step` since the epoch, so a chart that refreshes keeps the same buckets, and the first one can start a little before `from`.
 - `avg` is the average over the bucket, weighted by sample count, and `min`/`max` are the extremes. For raw samples with a `step` of 1 they are all the sample value.
 - Bad input (no `series`, more than 10, `from` missing or not before `to`, `points` out of range) returns 400 with `{"error": "..."}`.

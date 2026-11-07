@@ -88,6 +88,14 @@ type Store struct {
 	db   *sql.DB
 	path string
 
+	// retention is how long each table keeps its rows, so Query does not
+	// read a table for a range it has already expired. A zero duration is
+	// unknown, and the table is read whatever the age of the range. Set
+	// with SetRetention before the store is shared.
+	retention Retention
+	// now defaults to time.Now. Tests replace it with a fake clock.
+	now func() time.Time
+
 	mu  sync.Mutex       // serialises Insert
 	ids map[string]int64 // series key to id, guarded by mu
 
@@ -113,7 +121,7 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("history: open %s: %w", path, err)
 	}
-	s := &Store{db: db, path: path, ids: map[string]int64{}}
+	s := &Store{db: db, path: path, now: time.Now, ids: map[string]int64{}}
 	if err := s.init(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("history: open %s: %w", path, err)
@@ -142,6 +150,12 @@ func (s *Store) init(ctx context.Context) error {
 	}
 	return s.loadIDs(ctx)
 }
+
+// SetRetention tells the store how long each table keeps its rows, the same
+// retention the Downsampler is given. Query then reads a coarser table when
+// the range starts before a table's retention. Call it before the store is
+// shared between goroutines.
+func (s *Store) SetRetention(r Retention) { s.retention = r }
 
 // Path returns the absolute path of the database file.
 func (s *Store) Path() string { return s.path }
