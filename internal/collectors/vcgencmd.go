@@ -3,6 +3,7 @@ package collectors
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os/exec"
@@ -34,7 +35,8 @@ var vcgencmdState = struct {
 // errVcgencmdUnavailable. That is detected on the first failing call, logged
 // once, and remembered: later calls return errVcgencmdUnavailable without
 // running anything. Other failures (a timeout, an unknown command) are
-// returned as is.
+// returned with vcgencmd's output appended, since that is where it prints
+// the firmware's error ("error=2 error_msg=\"Command not registered\"").
 //
 // vcgencmd talks to the firmware through /dev/vcio, which is owned by the
 // video group. The service user must be a member of that group
@@ -61,7 +63,13 @@ func vcgencmd(ctx context.Context, env *metrics.Env, args ...string) (string, er
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil
 	}
-	if ctx.Err() != nil || !vcgencmdMissing(err, out) {
+	if ctx.Err() != nil {
+		return "", err
+	}
+	if !vcgencmdMissing(err, out) {
+		if msg := strings.Join(strings.Fields(string(out)), " "); msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
 		return "", err
 	}
 
