@@ -110,7 +110,7 @@ pisens does not run `PRAGMA incremental_vacuum`. With steady deletes and inserts
 | GET    | `/api/history` | History of up to 10 series, see [History API](#history-api) |
 | GET    | `/metrics`     | Latest series in the Prometheus text format, see [Prometheus](#prometheus) (404 with `--prometheus=false`) |
 
-Any other `GET` path serves the web UI. Files in `web/dist` are served as they are, and paths without a file extension fall back to `index.html` so client-side routes like `/history` work as deep links. Hashed files under `/assets/` are cached for a year; everything else is sent with `Cache-Control: no-cache`. Unknown `/api/...` paths return a JSON 404.
+Any other `GET` path serves the web UI. Files in `web/dist` are served as they are, and paths without a file extension fall back to `index.html` so client-side routes like `/history` work as deep links. Hashed files under `/assets/` are cached for a year; everything else is sent with `Cache-Control: no-cache`. Every file carries a strong `ETag` (a hash of its contents), so browsers revalidate `index.html` with a cheap `304 Not Modified` until a new build changes it. Unknown `/api/...` paths return a JSON 404.
 
 A snapshot looks like this. Each collector has its own section; a collector that fails shows `{"error": "..."}` instead and the others are unaffected. Series keys are `area.thing_unit`.
 
