@@ -108,6 +108,22 @@ On a Pi 5 the `energy` section adds up how much energy the Pi uses, from the PMI
 
 `since` is the first reading ever. The cost fields only appear when `--energy-price` (or `PISENS_ENERGY_PRICE`) is set, as the price per kWh; `--energy-currency` is shown next to it. The series `energy.today_kwh` and `energy.month_kwh` go to the history like any other. The totals are kept in `<data-dir>/energy.json`, written at most once a minute and on shutdown, so they survive restarts and deploys; a restart within 2 minutes even counts the time pisens was down. On a Pi without PMIC readings (a Pi 4 or older, or not a Pi) the section is `{"available": false}`.
 
+### Power supply
+
+Under-voltage is the most common cause of a flaky Pi, so the `throttle` section also says how often it happened and whether the supply is up to the job:
+
+```json
+"throttle": {
+  "available": true, "raw": "0x50000", "flags": { ... },
+  "psu_max_current_ma": 3000, "psu_ok": false, "usb_max_current_enable": false,
+  "undervoltage_events": 3, "last_undervoltage": "2026-11-07T14:02:00Z"
+}
+```
+
+`psu_max_current_ma` is the current the supply offers, which a Pi 5 negotiates over USB-PD and the firmware puts in the device tree (`/proc/device-tree/chosen/power/max_current`). `psu_ok` is true at 5000 mA, what the official 27 W supply offers. With less, the firmware limits the USB ports to 600 mA in total unless `usb_max_current_enable=1` is set in `config.txt`, which `usb_max_current_enable` reports. Boards before the Pi 5 leave these fields out.
+
+`undervoltage_events` counts how often the "under-voltage now" flag went from clear to set since pisens started (a flag that is already set at startup counts as one), and `last_undervoltage` is when the latest one began. The series `power.undervoltage_events` holds the count and `power.undervoltage_events_5m` the events of the last 5 minutes, which the built-in `undervoltage-recent` alert watches. pisens checks the flag once per sample, so a dip that starts and ends between two samples is not counted; the "since boot" flag still shows it.
+
 The PMIC sees what it supplies to the board (SoC, RAM, wireless, HDMI and so on), not USB devices or its own losses, so the totals are an estimate that stays below what a meter at the wall would show.
 
 ### History
@@ -208,15 +224,18 @@ pisens checks alert rules against every sample. A rule compares one series, or e
 
 Without a rules file these built-in rules apply:
 
-| Name                | Rule                          | Severity |
-|---------------------|-------------------------------|----------|
-| `cpu-temp-high`     | `temp.cpu_c > 75` for 1m      | warning  |
-| `cpu-temp-critical` | `temp.cpu_c > 82` for 30s     | critical |
-| `undervoltage`      | `pi.undervoltage > 0`         | critical |
-| `throttled`         | `pi.throttled > 0` for 30s    | warning  |
-| `disk-full`         | `fs.*.used_pct > 90`          | warning  |
-| `memory-high`       | `mem.used_pct > 90` for 2m    | warning  |
-| `services-failed`   | `services.failed > 0` for 1m  | warning  |
+| Name                  | Rule                               | Severity |
+|-----------------------|------------------------------------|----------|
+| `cpu-temp-high`       | `temp.cpu_c > 75` for 1m           | warning  |
+| `cpu-temp-critical`   | `temp.cpu_c > 82` for 30s          | critical |
+| `undervoltage`        | `pi.undervoltage > 0`              | critical |
+| `undervoltage-recent` | `power.undervoltage_events_5m > 0` | warning  |
+| `throttled`           | `pi.throttled > 0` for 30s         | warning  |
+| `disk-full`           | `fs.*.used_pct > 90`               | warning  |
+| `memory-high`         | `mem.used_pct > 90` for 2m         | warning  |
+| `services-failed`     | `services.failed > 0` for 1m       | warning  |
+
+`undervoltage-recent` fires for 5 minutes after every under-voltage event (see [Power supply](#power-supply)), so a dip that is over before the next sample still shows up.
 
 `services-failed` fires when a systemd service has been in the failed state for a minute; the **Services** section shows which one. On a machine without systemctl there is no `services.failed` series, so it never fires.
 

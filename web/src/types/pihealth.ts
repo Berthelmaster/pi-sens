@@ -11,6 +11,19 @@ export interface ThrottleSection {
   /** The get_throttled value as lowercase hex, e.g. "0x50005". */
   raw?: string
   flags?: ThrottleFlags
+  /** The supply's current rating in mA (Pi 5 only). */
+  psu_max_current_ma?: number
+  /** Whether the supply offers the 5000 mA a Pi 5 needs (Pi 5 only). */
+  psu_ok?: boolean
+  /**
+   * Whether `usb_max_current_enable=1` lifts the USB current limit of a
+   * supply below 5 A. Missing if the firmware does not say.
+   */
+  usb_max_current_enable?: boolean
+  /** Under-voltage events since pisens started. */
+  undervoltage_events?: number
+  /** When the latest under-voltage event began, RFC 3339. */
+  last_undervoltage?: string
 }
 
 /** Bits 0-3 of get_throttled are the current state, 16-19 "since boot". */
@@ -167,6 +180,75 @@ export function piHealthStatus(
   if (badges.some((b) => b.state === 'active')) return 'critical'
   if (badges.length > 0 || supplyLow(ext5v)) return 'warning'
   return flags ? 'ok' : 'unknown'
+}
+
+export interface PsuSummary {
+  /** The rating, e.g. "5 A". */
+  rating: string
+  ok: boolean
+  /** Why a supply below 5 A matters, or undefined when it is fine. */
+  note?: string
+}
+
+/**
+ * The supply rating for display, or undefined when the board does not
+ * report it (anything before the Pi 5).
+ */
+export function psuSummary(
+  throttle: Partial<ThrottleSection> | undefined,
+): PsuSummary | undefined {
+  const ma = num(throttle?.psu_max_current_ma)
+  if (ma === undefined) return undefined
+  // Trust the backend's verdict, but work it out if it is missing.
+  const ok =
+    typeof throttle?.psu_ok === 'boolean' ? throttle.psu_ok : ma >= 5000
+  const rating = `${Number((ma / 1000).toFixed(2))} A`
+  if (ok) return { rating, ok }
+  return {
+    rating,
+    ok,
+    note:
+      throttle?.usb_max_current_enable === true
+        ? 'USB limit lifted in config.txt'
+        : 'USB current limited',
+  }
+}
+
+/**
+ * Describes the under-voltage events since pisens started, e.g. "3 times,
+ * last 14:02". The time is local and gets a date when it is not today.
+ * Undefined when the count is unknown.
+ */
+export function undervoltageSummary(
+  throttle: Partial<ThrottleSection> | undefined,
+  now: Date = new Date(),
+): string | undefined {
+  const count = num(throttle?.undervoltage_events)
+  if (count === undefined) return undefined
+  if (count === 0) return 'none since pisens started'
+  const times = count === 1 ? 'once' : `${count} times`
+  const last = throttle?.last_undervoltage
+    ? new Date(throttle.last_undervoltage)
+    : undefined
+  if (!last || Number.isNaN(last.getTime())) return times
+  return `${times}, last ${formatEventTime(last, now)}`
+}
+
+const clockFormat = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+})
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+})
+
+/** "14:02" for a time today, "5 Nov 14:02" for an earlier day. */
+function formatEventTime(t: Date, now: Date): string {
+  const clock = clockFormat.format(t)
+  return t.toDateString() === now.toDateString()
+    ? clock
+    : `${dateFormat.format(t)} ${clock}`
 }
 
 /** Formats a voltage, e.g. 5.0812 -> "5.08 V", 0.72 -> "0.720 V". */

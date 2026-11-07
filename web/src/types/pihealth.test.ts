@@ -4,9 +4,11 @@ import {
   formatWatts,
   piHealthStatus,
   powerSection,
+  psuSummary,
   supplyLow,
   throttleBadges,
   throttleSection,
+  undervoltageSummary,
   type ThrottleFlags,
 } from './pihealth'
 import type { Snapshot } from './snapshot'
@@ -112,5 +114,88 @@ describe('formatters', () => {
   it('formats watts', () => {
     expect(formatWatts(3.14159)).toBe('3.14 W')
     expect(formatWatts(NaN)).toBe('–')
+  })
+})
+
+describe('psuSummary', () => {
+  it('marks a 5 A supply as fine', () => {
+    expect(psuSummary({ psu_max_current_ma: 5000, psu_ok: true })).toEqual({
+      rating: '5 A',
+      ok: true,
+    })
+  })
+
+  it('says a weaker supply limits USB current', () => {
+    expect(
+      psuSummary({
+        psu_max_current_ma: 3000,
+        psu_ok: false,
+        usb_max_current_enable: false,
+      }),
+    ).toEqual({ rating: '3 A', ok: false, note: 'USB current limited' })
+    expect(psuSummary({ psu_max_current_ma: 2500 })).toEqual({
+      rating: '2.5 A',
+      ok: false,
+      note: 'USB current limited',
+    })
+  })
+
+  it('notes when config.txt lifts the USB limit', () => {
+    expect(
+      psuSummary({ psu_max_current_ma: 3000, usb_max_current_enable: true }),
+    ).toEqual({
+      rating: '3 A',
+      ok: false,
+      note: 'USB limit lifted in config.txt',
+    })
+  })
+
+  it('is undefined without a rating', () => {
+    expect(psuSummary({ available: true })).toBeUndefined()
+    expect(psuSummary(undefined)).toBeUndefined()
+  })
+})
+
+describe('undervoltageSummary', () => {
+  // Local times, so the expectations hold in any time zone.
+  const now = new Date(2026, 10, 7, 15, 30)
+
+  it('counts events and shows when the last one began', () => {
+    const last = new Date(2026, 10, 7, 14, 2).toISOString()
+    expect(
+      undervoltageSummary(
+        { undervoltage_events: 3, last_undervoltage: last },
+        now,
+      ),
+    ).toBe('3 times, last 14:02')
+    expect(
+      undervoltageSummary(
+        { undervoltage_events: 1, last_undervoltage: last },
+        now,
+      ),
+    ).toBe('once, last 14:02')
+  })
+
+  it('adds the date for an earlier day', () => {
+    const last = new Date(2026, 10, 5, 9, 7).toISOString()
+    expect(
+      undervoltageSummary(
+        { undervoltage_events: 2, last_undervoltage: last },
+        now,
+      ),
+    ).toBe('2 times, last 5 Nov 09:07')
+  })
+
+  it('handles no events and missing data', () => {
+    expect(undervoltageSummary({ undervoltage_events: 0 }, now)).toBe(
+      'none since pisens started',
+    )
+    expect(
+      undervoltageSummary(
+        { undervoltage_events: 2, last_undervoltage: 'nonsense' },
+        now,
+      ),
+    ).toBe('2 times')
+    expect(undervoltageSummary({ available: true }, now)).toBeUndefined()
   })
 })

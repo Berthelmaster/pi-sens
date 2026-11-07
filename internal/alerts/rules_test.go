@@ -212,6 +212,7 @@ func TestDefaultRuleNames(t *testing.T) {
 		"cpu-temp-high",
 		"cpu-temp-critical",
 		"undervoltage",
+		"undervoltage-recent",
 		"throttled",
 		"disk-full",
 		"memory-high",
@@ -232,6 +233,14 @@ func defaultRule(t *testing.T, name string) Rule {
 	}
 	t.Fatalf("no default rule %q", name)
 	return Rule{}
+}
+
+func TestUndervoltageRecentRule(t *testing.T) {
+	r := defaultRule(t, "undervoltage-recent")
+	want := Rule{Name: "undervoltage-recent", Series: "power.undervoltage_events_5m", Op: OpAbove, Threshold: 0, Severity: SeverityWarning}
+	if r != want {
+		t.Errorf("undervoltage-recent = %+v, want %+v", r, want)
+	}
 }
 
 func TestServicesFailedRule(t *testing.T) {

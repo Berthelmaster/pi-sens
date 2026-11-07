@@ -10,9 +10,11 @@
     piHealthStatus,
     POWER_SERIES,
     powerSection,
+    psuSummary,
     supplyLow,
     throttleBadges,
     throttleSection,
+    undervoltageSummary,
     type PowerSection,
     type ThrottleSection,
   } from '../types/pihealth'
@@ -41,6 +43,11 @@
 
   let flags = $derived(throttle?.available ? throttle.flags : undefined)
   let badges = $derived(throttleBadges(flags))
+  // Only a Pi 5 reports the supply rating.
+  let psu = $derived(throttle?.available ? psuSummary(throttle) : undefined)
+  let undervoltage = $derived(
+    throttle?.available ? undervoltageSummary(throttle) : undefined,
+  )
 
   let volts = $derived(power?.available ? power.volts : undefined)
   let clocks = $derived(power?.available ? power.clocks_mhz : undefined)
@@ -99,6 +106,31 @@
           <li class="badge" data-state="ok">All good</li>
         {/each}
       </ul>
+    {/if}
+    {#if psu || undervoltage}
+      <dl class="supply">
+        {#if psu}
+          <div>
+            <dt>Power supply:</dt>
+            <dd class:low={!psu.ok}>
+              {psu.rating}
+              {#if psu.ok}<span
+                  class="ok"
+                  title="Enough for a Pi 5 with USB devices at full current"
+                  >✓</span
+                >{:else}– {psu.note}{/if}
+            </dd>
+          </div>
+        {/if}
+        {#if undervoltage}
+          <div>
+            <dt title="Times the supply voltage dropped too low">
+              Under-voltage:
+            </dt>
+            <dd>{undervoltage}</dd>
+          </div>
+        {/if}
+      </dl>
     {/if}
 
     <h3>Voltages and clocks</h3>
@@ -223,6 +255,29 @@
   .since {
     font-weight: 400;
     font-size: 0.75rem;
+  }
+
+  .supply {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: var(--space-3) 0 0;
+    font-size: 0.875rem;
+  }
+
+  .supply div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  .supply dt {
+    font-size: inherit;
+  }
+
+  .ok {
+    color: var(--color-ok);
+    font-weight: 600;
   }
 
   .stats {
