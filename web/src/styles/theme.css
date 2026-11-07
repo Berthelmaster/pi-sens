@@ -1,0 +1,56 @@
+/*
+ * Theme tokens. Every colour is written once as light-dark(<light>, <dark>)
+ * and the browser picks a side from color-scheme:
+ *
+ * - dark by default
+ * - light when the OS asks for it (prefers-color-scheme)
+ * - a manual choice sets data-theme on <html>, which wins over both
+ *
+ * Components should only use these variables, never hard-coded colours, so
+ * both themes keep working.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --color-bg: light-dark(#f4f5f7, #0f1115);
+  --color-surface: light-dark(#ffffff, #181b21);
+  --color-surface-raised: light-dark(#eef0f3, #20242c);
+  --color-border: light-dark(#d8dce2, #2a2f38);
+  --color-text: light-dark(#1b1f24, #e6e8eb);
+  --color-text-muted: light-dark(#5b6470, #9aa3ad);
+  --color-accent: light-dark(#c51a4a, #f0507a);
+  --color-accent-contrast: #ffffff;
+
+  --color-ok: light-dark(#1a7f37, #3fb950);
+  --color-warning: light-dark(#9a6700, #d29922);
+  --color-critical: light-dark(#cf222e, #f85149);
+  --color-unknown: var(--color-text-muted);
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  --radius: 0.5rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --shadow: 0 1px 2px light-dark(rgb(0 0 0 / 0.06), rgb(0 0 0 / 0.4));
+
+  --content-max-width: 112rem;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
