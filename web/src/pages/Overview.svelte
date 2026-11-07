@@ -2,6 +2,7 @@
   import CpuWidget from '../widgets/CpuWidget.svelte'
   import EnergyWidget from '../widgets/EnergyWidget.svelte'
   import MemoryWidget from '../widgets/MemoryWidget.svelte'
+  import NetQualityWidget from '../widgets/NetQualityWidget.svelte'
   import NetworkWidget from '../widgets/NetworkWidget.svelte'
   import PiHealthWidget from '../widgets/PiHealthWidget.svelte'
   import ProcessesWidget from '../widgets/ProcessesWidget.svelte'
@@ -22,6 +23,7 @@
   <NetworkWidget />
   <PiHealthWidget />
   <EnergyWidget />
+  <NetQualityWidget />
   <ServicesWidget />
   <div class="full">
     <ProcessesWidget />
