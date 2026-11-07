@@ -28,6 +28,7 @@ func TestLoad(t *testing.T) {
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: 24 * time.Hour, History1mRetention: 168 * time.Hour, History15mRetention: 2160 * time.Hour,
 				NotifyCooldown: 15 * time.Minute,
+				Prometheus:     true,
 			},
 		},
 		{
@@ -55,6 +56,7 @@ func TestLoad(t *testing.T) {
 				AlertsFile:    "/etc/pisens/alerts.yaml",
 				NotifyWebhook: "https://hooks.example.com/pisens?token=abc", NotifyNtfy: "https://ntfy.sh/my-pi",
 				NotifyCooldown: 5 * time.Minute,
+				Prometheus:     true,
 			},
 		},
 		{
@@ -71,6 +73,7 @@ func TestLoad(t *testing.T) {
 				HistoryRawRetention: 6 * time.Hour, History1mRetention: 48 * time.Hour, History15mRetention: 8760 * time.Hour,
 				AlertsFile:    "rules.yaml",
 				NotifyWebhook: "http://192.168.1.10:9000/hook", NotifyNtfy: "https://ntfy.example.com/pi",
+				Prometheus: true,
 			},
 		},
 		{
@@ -101,6 +104,7 @@ func TestLoad(t *testing.T) {
 				AlertsFile:    "flag.yaml",
 				NotifyWebhook: "https://env.example.com/hook", NotifyNtfy: "https://ntfy.sh/flag",
 				NotifyCooldown: time.Hour,
+				Prometheus:     true,
 			},
 		},
 		{
@@ -111,6 +115,7 @@ func TestLoad(t *testing.T) {
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NotifyCooldown: DefaultNotifyCooldown,
 				WatchServices:  []string{"ssh", "pisens.service", "nginx"},
+				Prometheus:     true,
 			},
 		},
 		{
@@ -122,6 +127,7 @@ func TestLoad(t *testing.T) {
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NotifyCooldown: DefaultNotifyCooldown,
 				WatchServices:  []string{"cron"},
+				Prometheus:     true,
 			},
 		},
 		{
@@ -131,6 +137,7 @@ func TestLoad(t *testing.T) {
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
 				AuthUser:       "admin", AuthPasswordHash: testHash,
 			},
 		},
@@ -142,6 +149,7 @@ func TestLoad(t *testing.T) {
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
 				AuthUser:       "pi", AuthPasswordHash: testHash,
 			},
 		},
@@ -153,6 +161,36 @@ func TestLoad(t *testing.T) {
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
 				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "prometheus off by flag",
+			args: []string{"--prometheus=false"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NotifyCooldown: DefaultNotifyCooldown,
+			},
+		},
+		{
+			name: "prometheus off by env",
+			env:  map[string]string{EnvPrometheus: "false"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NotifyCooldown: DefaultNotifyCooldown,
+			},
+		},
+		{
+			name: "prometheus flag wins over env",
+			args: []string{"--prometheus"},
+			env:  map[string]string{EnvPrometheus: "0"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
 			},
 		},
 	}
@@ -200,6 +238,7 @@ func TestLoadErrors(t *testing.T) {
 		{name: "unknown flag", args: []string{"--nope"}},
 		{name: "space in watched service", args: []string{"--watch-services", "ssh,my service"}},
 		{name: "path as watched service", env: map[string]string{EnvWatchServices: "/etc/systemd/ssh.service"}},
+		{name: "bad env prometheus", env: map[string]string{EnvPrometheus: "maybe"}},
 		{name: "positional args", args: []string{"extra"}},
 		{name: "auth user without hash", args: []string{"--auth-user", "admin"}},
 		{name: "auth hash without user", env: map[string]string{EnvAuthPasswordHash: testHash}},

@@ -72,6 +72,7 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--notify-ntfy`           | `PISENS_NOTIFY_NTFY`           | (none)            | ntfy topic URL for alert notifications                    |
 | `--notify-cooldown`       | `PISENS_NOTIFY_COOLDOWN`       | `15m`             | Per-alert notification cooldown, `0` for none             |
 | `--watch-services`        | `PISENS_WATCH_SERVICES`        | (none)            | Comma separated systemd services to report the state of, e.g. `ssh,pisens` |
+| `--prometheus`            | `PISENS_PROMETHEUS`            | `true`            | Serve [Prometheus metrics](#prometheus) at `/metrics`; `--prometheus=false` turns it off |
 | `--auth-user`             | `PISENS_AUTH_USER`             | (none)            | User name for HTTP basic auth, see [Authentication](#authentication) |
 | `--auth-password-hash`    | `PISENS_AUTH_PASSWORD_HASH`    | (none)            | bcrypt hash of the basic auth password, from `pisens hash-password` |
 
@@ -107,6 +108,7 @@ pisens does not run `PRAGMA incremental_vacuum`. With steady deletes and inserts
 | GET    | `/api/alerts`  | Firing alerts and the last 50 resolved ones |
 | GET    | `/api/series`  | Stored series keys, `?prefix=cpu.` for only some |
 | GET    | `/api/history` | History of up to 10 series, see [History API](#history-api) |
+| GET    | `/metrics`     | Latest series in the Prometheus text format, see [Prometheus](#prometheus) (404 with `--prometheus=false`) |
 
 Any other `GET` path serves the web UI. Files in `web/dist` are served as they are, and paths without a file extension fall back to `index.html` so client-side routes like `/history` work as deep links. Hashed files under `/assets/` are cached for a year; everything else is sent with `Cache-Control: no-cache`. Unknown `/api/...` paths return a JSON 404.
 
@@ -256,6 +258,44 @@ At startup pisens logs which notifiers are enabled, with only the scheme and hos
 ./bin/pisens --notify-ntfy https://ntfy.sh/some-long-random-topic
 ```
 
+### Prometheus
+
+`GET /metrics` serves the latest snapshot's `series` in the Prometheus text format, so an existing Prometheus and Grafana can scrape the Pi. It is on by default; turn it off with `--prometheus=false` or `PISENS_PROMETHEUS=false`. A scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: pisens
+    static_configs:
+      - targets: ["raspberrypi.local:8080"]
+```
+
+Every metric is a gauge named `pisens_...` with a `HELP` line. Keys that name a core, interface, disk, mount or sensor become a label:
+
+| Series key | Prometheus metric |
+|------------|-------------------|
+| `cpu.core3.usage_pct` | `pisens_cpu_usage_percent{core="3"}` |
+| `cpu.usage_pct` | `pisens_cpu_total_usage_percent` |
+| `net.eth0.rx_bps` | `pisens_net_rx_bytes_per_second{iface="eth0"}` |
+| `net.total.rx_bps` | `pisens_net_total_rx_bytes_per_second` |
+| `disk.sda.read_bps` | `pisens_disk_read_bytes_per_second{device="sda"}` |
+| `fs.root.used_pct` | `pisens_filesystem_used_percent{mount="root"}` |
+| `temp.cpu_c` | `pisens_temperature_celsius{sensor="cpu"}` |
+| `load.1` | `pisens_load1` |
+
+The full table is `rules` in `internal/promtext/promtext.go`. Values keep the units the collectors report (percent, MHz), named in the suffix. Totals and averages get their own metric rather than a `core="all"` style label, so `sum()` and `avg()` over a labelled metric stay correct. A key without a rule is still exported under a sanitised name: `gpu.mem_bytes` becomes `pisens_gpu_mem_bytes`. `pisens_last_sample_timestamp_seconds` tells you when the values were sampled. Until the first sample `/metrics` answers 503, which Prometheus records as a failed scrape.
+
+With [basic auth](#authentication) on, `/metrics` needs the credentials like every other route. Give Prometheus the plain password, not the hash:
+
+```yaml
+scrape_configs:
+  - job_name: pisens
+    basic_auth:
+      username: admin
+      password_file: /etc/prometheus/pisens_password
+    static_configs:
+      - targets: ["raspberrypi.local:8080"]
+```
+
 ### Authentication
 
 The dashboard and API are open to anyone who can reach the port, which is fine on a trusted home network. To require a login, create a bcrypt hash of a password and give pisens both a user name and the hash:
@@ -283,7 +323,7 @@ Basic auth sends the password with every request, encoded but not encrypted, so 
 
 ### Adding a collector
 
-Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions, `cpufreq.go` for a small reference implementation and `cpu.go` for one that keeps state between samples.
+Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions, `cpufreq.go` for a small reference implementation and `cpu.go` for one that keeps state between samples. New series keys show up on `/metrics` under a sanitised name; add a rule to `internal/promtext/promtext.go` for a proper name and labels.
 
 ## Install on a Raspberry Pi
 

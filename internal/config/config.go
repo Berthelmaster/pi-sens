@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,7 @@ const (
 	EnvNotifyCooldown = "PISENS_NOTIFY_COOLDOWN"
 	EnvWatchServices  = "PISENS_WATCH_SERVICES"
 
+	EnvPrometheus       = "PISENS_PROMETHEUS"
 	EnvAuthUser         = "PISENS_AUTH_USER"
 	EnvAuthPasswordHash = "PISENS_AUTH_PASSWORD_HASH"
 )
@@ -88,6 +90,8 @@ type Config struct {
 	// WatchServices are the systemd units whose state is reported on every
 	// sample, e.g. ["ssh", "pisens.service"]. Empty means none.
 	WatchServices []string
+	// Prometheus turns on GET /metrics in the Prometheus text format.
+	Prometheus bool
 	// AuthUser and AuthPasswordHash turn on HTTP basic auth for every route
 	// except /api/health. AuthPasswordHash is a bcrypt hash. Either both
 	// are set or neither; neither leaves the server open.
@@ -123,6 +127,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		History15mRetention: DefaultHistory15mRetention,
 
 		NotifyCooldown: DefaultNotifyCooldown,
+
+		Prometheus: true,
 	}
 
 	// Invalid environment values are reported after the flags are parsed, so
@@ -160,6 +166,15 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	cfg.AlertsFile = getenv(EnvAlerts)
 	cfg.NotifyWebhook = getenv(EnvNotifyWebhook)
 	cfg.NotifyNtfy = getenv(EnvNotifyNtfy)
+	if v := getenv(EnvPrometheus); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: want true or false", EnvPrometheus, v))
+		} else {
+			cfg.Prometheus = parsed
+		}
+	}
+
 	cfg.AuthUser = getenv(EnvAuthUser)
 	cfg.AuthPasswordHash = getenv(EnvAuthPasswordHash)
 
@@ -193,6 +208,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"shortest time between two notifications that the same alert fires, 0 for none (env "+EnvNotifyCooldown+")")
 	fs.StringVar(&watch, "watch-services", watch,
 		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
+	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
+		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
 	fs.StringVar(&cfg.AuthUser, "auth-user", cfg.AuthUser,
 		"user name for HTTP basic auth; needs --auth-password-hash (env "+EnvAuthUser+")")
 	fs.StringVar(&cfg.AuthPasswordHash, "auth-password-hash", cfg.AuthPasswordHash,

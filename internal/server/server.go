@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"github.com/Berthelmaster/pi-sens/internal/auth"
 	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
+	"github.com/Berthelmaster/pi-sens/internal/promtext"
 )
 
 const (
@@ -68,6 +70,8 @@ type Server struct {
 	alerts   AlertSource      // nil turns off /api/alerts and alert events
 	history  HistorySource    // nil turns off /api/series and /api/history
 	now      func() time.Time // the default end of a history query; tests fix it
+	// prometheus turns on /metrics. EnablePrometheus sets it before serving.
+	prometheus bool
 
 	// Timeouts are fields so tests can shorten them.
 	writeTimeout       time.Duration
@@ -129,6 +133,7 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("GET /api/series", s.handleSeries)
 		s.mux.HandleFunc("GET /api/history", s.handleHistory)
 	}
+	s.mux.HandleFunc("GET /metrics", s.handlePrometheus)
 	// Everything else, including unknown /api paths, goes to the SPA handler.
 	s.mux.Handle("GET /", spaHandler{ui: s.ui, logger: s.logger})
 }
@@ -206,6 +211,35 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, snap)
+}
+
+// EnablePrometheus turns on GET /metrics, which serves the latest snapshot's
+// series in the Prometheus text format. Call it before Run or Serve.
+func (s *Server) EnablePrometheus() {
+	s.prometheus = true
+}
+
+func (s *Server) handlePrometheus(w http.ResponseWriter, r *http.Request) {
+	if !s.prometheus {
+		// Turned off: a plain 404 rather than the SPA page, so a scraper
+		// that is still pointed here fails clearly.
+		http.NotFound(w, r)
+		return
+	}
+	snap, ok := s.snapshot.Latest()
+	if !ok {
+		// Prometheus records a failed scrape, which is what this is.
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "no metrics sampled yet\n")
+		return
+	}
+	w.Header().Set("Content-Type", promtext.ContentType)
+	w.Header().Set("Cache-Control", "no-store")
+	if err := promtext.Write(w, snap); err != nil {
+		s.logger.Debug("write prometheus metrics", "err", err)
+	}
 }
 
 func (s *Server) handleAlerts(w http.ResponseWriter, _ *http.Request) {

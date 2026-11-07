@@ -24,15 +24,17 @@ func newTestAuth(t *testing.T) *auth.Basic {
 	return b
 }
 
-// authTestPaths covers every kind of route: the API, the SPA and its assets,
-// and unknown paths.
+// authTestPaths covers every kind of route: the API, the Prometheus endpoint,
+// the SPA and its assets, and unknown paths.
 var authTestPaths = []string{
 	"/", "/index.html", "/history", "/assets/index-abc.js",
 	"/api/metrics", "/api/alerts", "/api/series", "/api/history?series=cpu.usage_pct", "/api/nope",
+	"/metrics",
 }
 
 func TestBasicAuthOffByDefault(t *testing.T) {
 	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{snap: snapAt(1), ok: true}, nil, nil)
+	s.EnablePrometheus()
 	for _, path := range append(authTestPaths, "/api/health") {
 		rec := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -54,6 +56,7 @@ func TestBasicAuthOffByDefault(t *testing.T) {
 func TestBasicAuthProtectsEveryRouteButHealth(t *testing.T) {
 	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{snap: snapAt(1), ok: true}, nil, nil,
 		WithBasicAuth(newTestAuth(t)))
+	s.EnablePrometheus()
 
 	for _, path := range authTestPaths {
 		rec := httptest.NewRecorder()
