@@ -122,7 +122,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	samplerDone := make(chan error, 1)
 	go func() { samplerDone <- sampler.Run(ctx) }()
 
-	srv := server.New(cfg.Listen, version, web.Dist(), logger, sampler, evaluator)
+	srv := server.New(cfg.Listen, version, web.Dist(), logger, sampler, evaluator, store)
 	err = srv.Run(ctx)
 	stop() // stop the sampler too if the server failed on its own
 	if serr := <-samplerDone; serr != nil {

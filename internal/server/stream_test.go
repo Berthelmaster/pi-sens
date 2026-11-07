@@ -124,7 +124,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 func TestStreamSendsLatestThenEverySnapshot(t *testing.T) {
 	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
-	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil).Handler())
+	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil, nil).Handler())
 	t.Cleanup(ts.Close) // runs after openStream's cleanup closes the stream
 
 	resp := openStream(t, context.Background(), ts.URL)
@@ -161,7 +161,7 @@ func mustJSON(t *testing.T, v any) []byte {
 
 func TestStreamBeforeFirstSample(t *testing.T) {
 	src := &fakeSource{subscribed: make(chan struct{}, 1)}
-	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil).Handler())
+	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil, nil).Handler())
 	t.Cleanup(ts.Close) // runs after openStream's cleanup closes the stream
 
 	// Headers arrive straight away even with nothing to send yet.
@@ -176,7 +176,7 @@ func TestStreamBeforeFirstSample(t *testing.T) {
 
 func TestStreamHeartbeat(t *testing.T) {
 	src := &fakeSource{}
-	s := New(":0", "dev", testUI, discardLogger(), src, nil)
+	s := New(":0", "dev", testUI, discardLogger(), src, nil, nil)
 	s.heartbeatInterval = 10 * time.Millisecond
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close) // runs after openStream's cleanup closes the stream
@@ -196,7 +196,7 @@ func TestStreamHeartbeat(t *testing.T) {
 
 func TestStreamUnsubscribesWhenClientDisconnects(t *testing.T) {
 	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
-	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil).Handler())
+	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil, nil).Handler())
 	t.Cleanup(ts.Close) // runs after openStream's cleanup closes the stream
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -210,7 +210,7 @@ func TestStreamUnsubscribesWhenClientDisconnects(t *testing.T) {
 
 func TestStreamHandlerReturnsOnCancelledContext(t *testing.T) {
 	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
-	s := New(":0", "dev", testUI, discardLogger(), src, nil)
+	s := New(":0", "dev", testUI, discardLogger(), src, nil, nil)
 	before := runtime.NumGoroutine()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -241,7 +241,7 @@ func TestStreamHandlerReturnsOnCancelledContext(t *testing.T) {
 
 func TestStreamEndsWhenSourceStops(t *testing.T) {
 	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
-	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil).Handler())
+	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil, nil).Handler())
 	t.Cleanup(ts.Close) // runs after openStream's cleanup closes the stream
 
 	resp := openStream(t, context.Background(), ts.URL)
@@ -283,7 +283,7 @@ func serve(t *testing.T, s *Server) (string, func() error) {
 
 func TestStreamOutlivesServerWriteTimeout(t *testing.T) {
 	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
-	s := New(":0", "dev", testUI, discardLogger(), src, nil)
+	s := New(":0", "dev", testUI, discardLogger(), src, nil, nil)
 	s.writeTimeout = 50 * time.Millisecond
 	url, _ := serve(t, s)
 
@@ -301,7 +301,7 @@ func TestStreamOutlivesServerWriteTimeout(t *testing.T) {
 
 func TestShutdownClosesStreams(t *testing.T) {
 	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
-	url, stop := serve(t, New(":0", "dev", testUI, discardLogger(), src, nil))
+	url, stop := serve(t, New(":0", "dev", testUI, discardLogger(), src, nil, nil))
 
 	resp := openStream(t, context.Background(), url)
 	<-src.subscribed

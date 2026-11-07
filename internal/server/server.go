@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Berthelmaster/pi-sens/internal/alerts"
+	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
@@ -44,6 +45,13 @@ type AlertSource interface {
 	Subscribe() (<-chan alerts.Set, func())
 }
 
+// HistorySource lists the stored series and reads their history.
+// *history.Store implements it.
+type HistorySource interface {
+	SeriesKeys(ctx context.Context, prefix string) ([]string, error)
+	Query(ctx context.Context, q history.Query) (history.Result, error)
+}
+
 // Server serves the pisens HTTP API and the web UI.
 type Server struct {
 	addr     string
@@ -52,7 +60,9 @@ type Server struct {
 	logger   *slog.Logger
 	mux      *http.ServeMux
 	snapshot SnapshotSource
-	alerts   AlertSource // nil turns off /api/alerts and alert events
+	alerts   AlertSource      // nil turns off /api/alerts and alert events
+	history  HistorySource    // nil turns off /api/series and /api/history
+	now      func() time.Time // the default end of a history query; tests fix it
 
 	// Timeouts are fields so tests can shorten them.
 	writeTimeout       time.Duration
@@ -64,7 +74,9 @@ type Server struct {
 // endpoint, serves metrics from snapshots and alerts from alertSource, and
 // serves the single-page app in ui at /. ui is normally web.Dist().
 // alertSource may be nil, which leaves out /api/alerts and the alert events.
-func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots SnapshotSource, alertSource AlertSource) *Server {
+// historySource may be nil, which leaves out /api/series and /api/history.
+func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots SnapshotSource, alertSource AlertSource,
+	historySource HistorySource) *Server {
 	s := &Server{
 		addr:     addr,
 		version:  version,
@@ -73,6 +85,8 @@ func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots Snapshot
 		mux:      http.NewServeMux(),
 		snapshot: snapshots,
 		alerts:   alertSource,
+		history:  historySource,
+		now:      time.Now,
 
 		writeTimeout:       writeTimeout,
 		heartbeatInterval:  heartbeatInterval,
@@ -88,6 +102,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/stream", s.handleStream)
 	if s.alerts != nil {
 		s.mux.HandleFunc("GET /api/alerts", s.handleAlerts)
+	}
+	if s.history != nil {
+		s.mux.HandleFunc("GET /api/series", s.handleSeries)
+		s.mux.HandleFunc("GET /api/history", s.handleHistory)
 	}
 	// Everything else, including unknown /api paths, goes to the SPA handler.
 	s.mux.Handle("GET /", spaHandler{ui: s.ui, logger: s.logger})

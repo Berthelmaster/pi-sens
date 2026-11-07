@@ -48,7 +48,7 @@ func TestAlertsEndpoint(t *testing.T) {
 	ev.Evaluate(seriesAt(0, map[string]float64{"pi.undervoltage": 1}))
 	ev.Evaluate(seriesAt(2, map[string]float64{"pi.undervoltage": 0}))
 	ev.Evaluate(seriesAt(4, map[string]float64{"pi.undervoltage": 1, "temp.cpu_c": 80}))
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, ev)
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, ev, nil)
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/alerts", nil))
@@ -82,7 +82,7 @@ func TestAlertsEndpoint(t *testing.T) {
 }
 
 func TestAlertsEndpointWithoutSource(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/alerts", nil))
@@ -94,7 +94,7 @@ func TestAlertsEndpointWithoutSource(t *testing.T) {
 func TestStreamSendsAlertsWhenTheyChange(t *testing.T) {
 	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
 	ev := newTestEvaluator()
-	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, ev).Handler())
+	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, ev, nil).Handler())
 	t.Cleanup(ts.Close) // runs after openStream's cleanup closes the stream
 
 	resp := openStream(t, context.Background(), ts.URL)
