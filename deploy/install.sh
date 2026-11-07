@@ -2,19 +2,29 @@
 # Install, upgrade or remove pisens as a systemd service.
 #
 #   sudo deploy/install.sh [BINARY]          install or upgrade
+#   sudo deploy/install.sh --version vX.Y.Z  install or upgrade from a release
 #   sudo deploy/install.sh --uninstall       remove the service and binary
 #   sudo deploy/install.sh --uninstall --purge
 #                                            also remove config, data and user
 #
 # BINARY is the pisens binary to install. Without it the script looks for
 # pisens next to itself, then bin/pisens-linux-arm64 and bin/pisens in the
-# repository it lives in.
+# repository it lives in, then pisens one directory up (the layout of a
+# release archive).
+#
+# With --version it downloads that GitHub release instead, checks it against
+# the release's SHA256SUMS and installs the binary, unit and settings example
+# from the archive. That also works when the script is piped into bash:
+#
+#   curl -fsSL https://raw.githubusercontent.com/Berthelmaster/pi-sens/main/deploy/install.sh |
+#     sudo bash -s -- --version latest
 #
 # Running it again is safe. An upgrade replaces the binary and the unit,
 # keeps /etc/pisens/pisens.env and /var/lib/pisens, and restarts the service.
 set -euo pipefail
 
 readonly name=pisens
+readonly repo=Berthelmaster/pi-sens
 readonly bin_dst=/usr/local/bin/pisens
 readonly unit_dst=/etc/systemd/system/pisens.service
 readonly dropin_dir=/etc/systemd/system/pisens.service.d
@@ -22,12 +32,21 @@ readonly conf_dir=/etc/pisens
 readonly env_dst=/etc/pisens/pisens.env
 readonly data_dir=/var/lib/pisens
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# BASH_SOURCE is empty when the script is piped into bash.
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 readonly script_dir
+# Where pisens.service and pisens.env.example come from: next to the script,
+# or the downloaded archive with --version.
+deploy_dir=$script_dir
+# Temporary directory for a downloaded release, removed on exit, and the
+# binary in it.
+work_dir=""
+src_binary=""
 
 usage() {
 	cat <<EOF
 Usage: sudo $0 [BINARY]
+       sudo $0 --version VERSION
        sudo $0 --uninstall [--purge]
 
 Installs BINARY as $bin_dst and runs it as the $name systemd service under
@@ -35,8 +54,13 @@ its own system user. Without BINARY it looks for, in order:
   $script_dir/pisens
   $(dirname "$script_dir")/bin/pisens-linux-arm64
   $(dirname "$script_dir")/bin/pisens
+  $(dirname "$script_dir")/pisens  (release archive)
 
 Options:
+  --version VERSION
+               download release VERSION (e.g. v1.2.0, or latest for the newest
+               non-pre-release) from github.com/$repo and install
+               it instead of a local binary; needs curl
   --uninstall  stop and disable the service, remove the unit and the binary;
                keeps $conf_dir, $data_dir and the $name user
   --purge      with --uninstall, also remove those
@@ -54,13 +78,69 @@ find_binary() {
 	local candidate
 	for candidate in "$script_dir/pisens" \
 		"$(dirname "$script_dir")/bin/pisens-linux-arm64" \
-		"$(dirname "$script_dir")/bin/pisens"; do
+		"$(dirname "$script_dir")/bin/pisens" \
+		"$(dirname "$script_dir")/pisens"; do
 		if [[ -f $candidate ]]; then
 			printf '%s\n' "$candidate"
 			return 0
 		fi
 	done
 	return 1
+}
+
+release_arch() {
+	case $(uname -m) in
+	aarch64 | arm64) printf 'arm64\n' ;;
+	x86_64 | amd64) printf 'amd64\n' ;;
+	*) die "there is no release build for $(uname -m); build pisens from source" ;;
+	esac
+}
+
+# latest_tag prints the tag of the newest release that is not a pre-release,
+# from where github.com/OWNER/REPO/releases/latest redirects to. Unlike the
+# API this has no rate limit.
+latest_tag() {
+	local url
+	url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$repo/releases/latest") ||
+		die "could not look up the latest release of $repo"
+	if [[ $url != */releases/tag/* ]]; then
+		die "$repo has no published release yet; pass a version such as v0.1.0"
+	fi
+	printf '%s\n' "${url##*/releases/tag/}"
+}
+
+# download_release fetches and verifies the release archive for tag (or
+# latest) and points src_binary and deploy_dir into it.
+download_release() {
+	local tag=$1 arch version archive base sum
+	command -v curl >/dev/null || die "--version needs curl; install it with 'apt install curl'"
+	arch=$(release_arch)
+	if [[ $tag == latest ]]; then
+		tag=$(latest_tag)
+	fi
+	[[ $tag == v* ]] || tag=v$tag
+	[[ $tag =~ ^v[0-9A-Za-z.+-]+$ ]] || die "invalid version $tag"
+	version=${tag#v}
+	archive=pisens_${version}_linux_${arch}
+	base=https://github.com/$repo/releases/download/$tag
+
+	work_dir=$(mktemp -d)
+	trap 'rm -rf "$work_dir"' EXIT
+
+	log "Downloading $archive.tar.gz from release $tag"
+	curl -fsSL -o "$work_dir/$archive.tar.gz" "$base/$archive.tar.gz" ||
+		die "could not download $base/$archive.tar.gz; is $tag a release of $repo?"
+	curl -fsSL -o "$work_dir/SHA256SUMS" "$base/SHA256SUMS" ||
+		die "could not download $base/SHA256SUMS"
+
+	sum=$(awk -v f="$archive.tar.gz" '$2 == f || $2 == "*" f { print $1 }' "$work_dir/SHA256SUMS")
+	[[ -n $sum ]] || die "SHA256SUMS of $tag has no entry for $archive.tar.gz"
+	printf '%s  %s\n' "$sum" "$work_dir/$archive.tar.gz" | sha256sum --check --quiet - ||
+		die "checksum mismatch for $archive.tar.gz"
+
+	tar -xzf "$work_dir/$archive.tar.gz" -C "$work_dir"
+	src_binary=$work_dir/$archive/pisens
+	deploy_dir=$work_dir/$archive/deploy
 }
 
 ensure_user() {
@@ -111,17 +191,20 @@ do_install() {
 	local src=${1:-}
 	if [[ -z $src ]]; then
 		src=$(find_binary) ||
-			die "no pisens binary found; build one with 'make build-arm64' or pass its path"
+			die "no pisens binary found; build one with 'make build-arm64', pass its path or use --version"
 	fi
 	[[ -f $src ]] || die "$src: no such file"
 	# An absolute path, so running it below never searches PATH.
 	src=$(realpath -- "$src")
-	[[ -f $script_dir/pisens.service ]] || die "$script_dir/pisens.service is missing"
-	[[ -f $script_dir/pisens.env.example ]] || die "$script_dir/pisens.env.example is missing"
+	[[ -f $deploy_dir/pisens.service ]] || die "$deploy_dir/pisens.service is missing"
+	[[ -f $deploy_dir/pisens.env.example ]] || die "$deploy_dir/pisens.env.example is missing"
 
 	# Catch a binary for the wrong architecture before it replaces a working one.
 	"$src" --help >/dev/null 2>&1 ||
 		die "$src does not run on this machine ($(uname -m)); is it the linux/arm64 build?"
+	# Builds from before --version existed fail on it, so it is only informative.
+	local new_version
+	new_version=$("$src" --version 2>/dev/null) || new_version="pisens (unknown version)"
 
 	local was_active=false
 	if systemctl is-active --quiet "$name"; then
@@ -132,15 +215,15 @@ do_install() {
 	install_binary "$src"
 
 	log "Installing $unit_dst"
-	install -m 0644 "$script_dir/pisens.service" "$unit_dst"
+	install -m 0644 "$deploy_dir/pisens.service" "$unit_dst"
 
 	install -d -m 0755 "$conf_dir"
-	install -m 0644 "$script_dir/pisens.env.example" "$conf_dir/pisens.env.example"
+	install -m 0644 "$deploy_dir/pisens.env.example" "$conf_dir/pisens.env.example"
 	if [[ -e $env_dst ]]; then
 		log "Keeping existing $env_dst"
 	else
 		log "Creating $env_dst"
-		install -m 0600 "$script_dir/pisens.env.example" "$env_dst"
+		install -m 0600 "$deploy_dir/pisens.env.example" "$env_dst"
 	fi
 
 	systemctl daemon-reload
@@ -161,7 +244,7 @@ do_install() {
 	listen=$(sed -n 's/^PISENS_LISTEN=//p' "$env_dst" | tail -n 1 | tr -d "\"'")
 	port=${listen##*:}
 	log ""
-	log "pisens is running."
+	log "$new_version is running."
 	log "Dashboard: http://$(hostname):${port:-8080}/"
 	log "Logs:      journalctl -u $name -f"
 }
@@ -201,11 +284,20 @@ do_uninstall() {
 }
 
 main() {
-	local uninstall=false purge=false binary=""
+	local uninstall=false purge=false binary="" release=""
 	while [[ $# -gt 0 ]]; do
 		case $1 in
 		--uninstall) uninstall=true ;;
 		--purge) purge=true ;;
+		--version)
+			[[ $# -ge 2 && -n $2 ]] || die "--version needs a version, e.g. --version v0.1.0 or --version latest"
+			release=$2
+			shift
+			;;
+		--version=*)
+			release=${1#--version=}
+			[[ -n $release ]] || die "--version needs a version, e.g. --version v0.1.0 or --version latest"
+			;;
 		-h | --help)
 			usage
 			return 0
@@ -225,11 +317,20 @@ main() {
 	if $uninstall && [[ -n $binary ]]; then
 		die "--uninstall takes no binary"
 	fi
+	if [[ -n $release ]] && $uninstall; then
+		die "--version does not work with --uninstall"
+	fi
+	if [[ -n $release && -n $binary ]]; then
+		die "give either a binary or --version, not both"
+	fi
 	[[ $(id -u) -eq 0 ]] || die "run as root, e.g. sudo $0"
 	[[ -d /run/systemd/system ]] || die "systemd is not running on this machine"
 
 	if $uninstall; then
 		do_uninstall "$purge"
+	elif [[ -n $release ]]; then
+		download_release "$release"
+		do_install "$src_binary"
 	else
 		do_install "$binary"
 	fi

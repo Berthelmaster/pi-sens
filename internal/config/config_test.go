@@ -99,3 +99,26 @@ func TestLoadHelp(t *testing.T) {
 		t.Fatalf("Load(--help) error = %v, want ErrHelp", err)
 	}
 }
+
+func TestLoadVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+	}{
+		{name: "flag", args: []string{"--version"}},
+		{name: "single dash", args: []string{"-version"}},
+		{name: "with other flags", args: []string{"--listen", ":9090", "--version"}},
+		// A broken environment file must not hide the version.
+		{name: "bad env", args: []string{"--version"}, env: map[string]string{EnvInterval: "soon"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(tt.args, envFrom(tt.env), io.Discard)
+			if !errors.Is(err, ErrVersion) {
+				t.Fatalf("Load(%v) error = %v, want ErrVersion", tt.args, err)
+			}
+		})
+	}
+}

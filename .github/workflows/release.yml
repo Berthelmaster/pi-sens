@@ -1,0 +1,168 @@
+name: Release
+
+# A pushed v* tag builds the release archives and publishes them as a GitHub
+# release. Running the workflow by hand (workflow_dispatch) is a dry run: it
+# builds the same archives and uploads them as run artifacts, but creates no
+# release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  web:
+    name: Frontend
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and tags so a dry run gets a version from git describe.
+          fetch-depth: 0
+
+      # tag is what the binary reports (v1.2.3), version names the archives (1.2.3).
+      - name: Version
+        id: version
+        run: |
+          if [[ $GITHUB_REF_TYPE == tag ]]; then
+            tag=$GITHUB_REF_NAME
+          else
+            tag=$(git describe --tags --always)
+          fi
+          echo "tag=${tag}" >>"$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
+          echo "Building ${tag}"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build linux/${{ matrix.arch }}
+    needs: web
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # amd64 is there for testing the release on a PC or in a VM.
+        arch: [arm64, amd64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.mod
+            go.sum
+
+      - run: go test ./...
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist/
+
+      - name: Build
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+          TAG: ${{ needs.web.outputs.tag }}
+        run: |
+          test -f web/dist/index.html
+          go build -trimpath -ldflags "-s -w -X main.version=${TAG}" -o bin/pisens ./cmd/pisens
+          file bin/pisens
+
+      # Runs only where the binary can run, but there it checks the version made it in.
+      - name: Check version
+        if: matrix.arch == 'amd64'
+        env:
+          TAG: ${{ needs.web.outputs.tag }}
+        run: |
+          got=$(bin/pisens --version)
+          echo "$got"
+          test "$got" = "pisens ${TAG}"
+
+      - name: Package
+        env:
+          NAME: pisens_${{ needs.web.outputs.version }}_linux_${{ matrix.arch }}
+        run: |
+          mkdir -p "dist/${NAME}/deploy"
+          cp bin/pisens README.md LICENSE "dist/${NAME}/"
+          cp deploy/install.sh deploy/pisens.service deploy/pisens.env.example "dist/${NAME}/deploy/"
+          tar -C dist --owner=0 --group=0 --numeric-owner -czf "dist/${NAME}.tar.gz" "${NAME}"
+          tar -tzvf "dist/${NAME}.tar.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pisens_${{ needs.web.outputs.version }}_linux_${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: [web, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: pisens_*
+          path: dist/
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- *.tar.gz >SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload dry run
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dry-run
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+      # A tag with a suffix such as v1.0.0-rc1 becomes a pre-release, which
+      # GitHub (and install.sh --version latest) does not treat as the latest.
+      - name: Create release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.web.outputs.tag }}
+        run: |
+          flags=()
+          if [[ $TAG == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${flags[@]}" \
+            dist/*.tar.gz dist/SHA256SUMS
