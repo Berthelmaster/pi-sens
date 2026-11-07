@@ -58,7 +58,7 @@ go-packages:
 shellcheck:
 	shellcheck deploy/*.sh deploy/tests/*.sh deploy/tests/stubs/*
 
-## test-deploy: test deploy/deploy.sh with stub systemctl and curl (no root needed)
+## test-deploy: test deploy/deploy.sh with stub systemctl, useradd, sudo and curl (no root needed)
 test-deploy:
 	deploy/tests/deploy_test.sh
 

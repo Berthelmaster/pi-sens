@@ -3,7 +3,9 @@
 
 tests_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly tests_dir
-readonly deploy=$tests_dir/../deploy.sh
+# The deploy.sh to test. deploy_test.sh points it at a copy of deploy/ per
+# test, so a test can change the unit it installs.
+deploy=$tests_dir/../deploy.sh
 failures=0
 status=0
 out=""
@@ -34,11 +36,15 @@ SCRIPT
 }
 
 # use_stubs puts the stub commands first on PATH and starts with a clean
-# record of calls, with the fake service running version.
+# record of calls, with the fake service running version (none for a service
+# that is not installed yet).
 use_stubs() {
 	local running=$1
 	mkdir -p "$STUB_STATE"
-	echo "$running" >"$STUB_STATE/running"
+	rm -f "$STUB_STATE/running"
+	if [[ $running != none ]]; then
+		echo "$running" >"$STUB_STATE/running"
+	fi
 	: >"$STUB_STATE/calls"
 	export STUB_STATE
 	export PATH=$tests_dir/stubs:$orig_path
@@ -52,7 +58,9 @@ run_deploy() {
 	out=$("$deploy" "$@" 2>&1) || status=$?
 }
 
-restarts() { grep -c '^systemctl restart pisens$' "$STUB_STATE/calls" || true; }
+# calls prints how often the stubs recorded a call matching the regex.
+calls() { grep -c -E "$1" "$STUB_STATE/calls" || true; }
+restarts() { calls '^systemctl restart pisens$'; }
 
 fail() {
 	printf '  FAIL: %s\n' "$*"

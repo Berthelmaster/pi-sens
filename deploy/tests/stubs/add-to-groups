@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# add-to-groups USER GROUP[,GROUP...] adds USER as a member of each group in
+# STUB_STATE/group, for the useradd and usermod stubs.
+user=$1
+IFS=, read -ra groups <<<"$2"
+for group in "${groups[@]}"; do
+	awk -F: -v OFS=: -v g="$group" -v u="$user" \
+		'$1 == g { $4 = ($4 == "" ? u : $4 "," u) } { print }' \
+		"$STUB_STATE/group" >"$STUB_STATE/group.new"
+	mv "$STUB_STATE/group.new" "$STUB_STATE/group"
+done

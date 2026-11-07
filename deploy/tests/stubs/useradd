@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Stub useradd for the deploy.sh tests: adds the user to STUB_STATE/passwd and
+# to the groups given with --groups in STUB_STATE/group.
+echo "useradd $*" >>"$STUB_STATE/calls"
+user=${*: -1}
+groups=""
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--groups | -G)
+		groups=$2
+		shift
+		;;
+	esac
+	shift
+done
+echo "$user:x:901:901::/var/lib/$user:/usr/sbin/nologin" >>"$STUB_STATE/passwd"
+echo "$user:x:901:" >>"$STUB_STATE/group"
+if [[ -n $groups ]]; then
+	"$(dirname "$0")/add-to-groups" "$user" "$groups"
+fi

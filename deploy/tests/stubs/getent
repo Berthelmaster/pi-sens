@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Stub getent for the deploy.sh tests: looks users and groups up in the passwd
+# and group files in STUB_STATE, which the useradd, usermod and groupadd stubs
+# write.
+db=$1 key=$2
+[[ -f $STUB_STATE/$db ]] || exit 2
+awk -F: -v k="$key" '$1 == k { print; found = 1 } END { exit !found }' "$STUB_STATE/$db" || exit 2

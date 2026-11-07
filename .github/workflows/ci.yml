@@ -83,7 +83,7 @@ jobs:
       - run: shellcheck --version
       - run: shellcheck deploy/*.sh deploy/tests/*.sh deploy/tests/stubs/*
 
-      # deploy.sh with stub systemctl, curl and health endpoint, first as a
+      # deploy.sh with stub systemctl, useradd, sudo and health endpoint, first as a
       # normal user against a fake root, then as root on the real paths for
       # the privilege handling (this runner is thrown away afterwards).
       - run: deploy/tests/deploy_test.sh

@@ -1,5 +1,0 @@
-# Lets the GitHub Actions runner user run the pisens deploy script as root,
-# and nothing else. Install as /etc/sudoers.d/pisens-deploy (mode 0440), or let
-# "install.sh --with-deploy-hook" do it. Change gh-runner if the runner runs
-# under another user.
-gh-runner ALL=(root) NOPASSWD: /usr/local/sbin/pisens-deploy

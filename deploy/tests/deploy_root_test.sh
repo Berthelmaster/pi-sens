@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Tests for what deploy/deploy.sh does only as root: reading the binary with
 # the caller's permissions and running it as the pisens user. It works on the
-# real paths (/usr/local/bin/pisens, /etc/systemd/system/pisens.service) and
-# creates a pisens user, so it is meant for a throwaway CI machine:
+# real paths (/usr/local/bin/pisens, /etc/systemd/system/pisens.service,
+# /etc/pisens, /var/lib/pisens) and creates a pisens user, so it is meant for a
+# throwaway CI machine:
 #
 #   sudo env PISENS_DEPLOY_ROOT_TEST=1 deploy/tests/deploy_root_test.sh
 #
-# systemctl, journalctl, curl and sleep are still the stubs from
-# deploy/tests/stubs.
+# systemctl, journalctl, curl, sleep and the user and group commands are still
+# the stubs from deploy/tests/stubs; the stub getent knows the pisens user
+# this test creates.
 set -euo pipefail
 
 # shellcheck source-path=SCRIPTDIR source=lib.sh
@@ -25,7 +27,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 	echo "run it through sudo from a normal user, which stands in for the runner user" >&2
 	exit 1
 }
-for path in /usr/local/bin/pisens /etc/systemd/system/pisens.service; do
+for path in /usr/local/bin/pisens /etc/systemd/system/pisens.service /etc/pisens /var/lib/pisens; do
 	[[ ! -e $path ]] || {
 		echo "$path exists; this test only runs where pisens is not installed" >&2
 		exit 1
@@ -41,12 +43,17 @@ chmod 0755 "$work"
 cleanup() {
 	rm -rf "$work"
 	rm -f "$bin" "$bin.prev" /etc/systemd/system/pisens.service
+	rm -rf /etc/pisens /var/lib/pisens
 }
 trap cleanup EXIT
 
 if ! id -u pisens >/dev/null 2>&1; then
 	useradd --system --user-group --no-create-home --shell /usr/sbin/nologin pisens
 fi
+# For the stub getent, which setup puts on PATH.
+pisens_passwd=$(getent passwd pisens)
+pisens_gid=$(id -g pisens)
+readonly pisens_passwd pisens_gid
 
 # setup installs pisens VERSION on the real paths. The fake binary must be
 # able to note who ran it, so the state directory is writable for everyone.
@@ -63,6 +70,9 @@ setup() {
 	touch /etc/systemd/system/pisens.service
 	: >"$STUB_STATE/version-users"
 	chmod 0666 "$STUB_STATE/version-users"
+	echo "$pisens_passwd" >"$STUB_STATE/passwd"
+	printf 'video:x:44:pisens\npisens:x:%s:\n' "$pisens_gid" >"$STUB_STATE/group"
+	touch "$STUB_STATE/enabled"
 }
 
 caller_cannot_read() {

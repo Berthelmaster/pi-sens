@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Stub sudo for the deploy.sh tests. Without STUB_SUDO_ROOT it fails like sudo
+# -n for a user without passwordless sudo. With it, "sudo -n true" succeeds
+# and "sudo -n -- COMMAND" runs COMMAND with PISENS_DEPLOY_ROOT set to
+# STUB_SUDO_ROOT, standing in for root.
+echo "sudo $*" >>"$STUB_STATE/calls"
+if [[ -z ${STUB_SUDO_ROOT:-} ]]; then
+	echo "sudo: a password is required" >&2
+	exit 1
+fi
+[[ $1 == -n ]] || exit 1
+shift
+[[ ${1:-} == -- ]] && shift
+PISENS_DEPLOY_ROOT=$STUB_SUDO_ROOT exec "$@"
