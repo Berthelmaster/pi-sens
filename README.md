@@ -75,6 +75,7 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--notify-cooldown`       | `PISENS_NOTIFY_COOLDOWN`       | `15m`             | Per-alert notification cooldown, `0` for none             |
 | `--watch-services`        | `PISENS_WATCH_SERVICES`        | (none)            | Comma separated systemd services to report the state of, e.g. `ssh,pisens` |
 | `--process-cmdline`       | `PISENS_PROCESS_CMDLINE`       | `redacted`        | How much of the top processes' command lines to show: `off`, `redacted` or `full`, see [Process command lines](#process-command-lines) |
+| `--net-skip`              | `PISENS_NET_SKIP`              | `lo,veth*,docker*,br-*` | Comma separated network interfaces to leave out, as names or prefixes ending in `*`, e.g. add `cni*,virbr*,tailscale0`; `--net-skip=` reports every interface |
 | `--prometheus`            | `PISENS_PROMETHEUS`            | `true`            | Serve [Prometheus metrics](#prometheus) at `/metrics`; `--prometheus=false` turns it off |
 | `--auth-user`             | `PISENS_AUTH_USER`             | (none)            | User name for HTTP basic auth, see [Authentication](#authentication) |
 | `--auth-password-hash`    | `PISENS_AUTH_PASSWORD_HASH`    | (none)            | bcrypt hash of the basic auth password, from `pisens hash-password` |
