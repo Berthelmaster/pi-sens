@@ -4,9 +4,16 @@ export type Theme = 'light' | 'dark'
 // choice before the first paint so a light-mode user never sees a dark flash.
 const STORAGE_KEY = 'pisens-theme'
 
-const lightQuery = window.matchMedia('(prefers-color-scheme: light)')
+// Outside a browser (vitest's node environment) there is no window or
+// localStorage. The theme then starts dark and simply follows no OS preference.
+const hasWindow = typeof window !== 'undefined'
+
+const lightQuery = hasWindow
+  ? window.matchMedia('(prefers-color-scheme: light)')
+  : null
 
 function readStored(): Theme | null {
+  if (!hasWindow) return null
   try {
     const value = localStorage.getItem(STORAGE_KEY)
     return value === 'light' || value === 'dark' ? value : null
@@ -17,9 +24,9 @@ function readStored(): Theme | null {
 }
 
 let chosen = $state<Theme | null>(readStored())
-let systemLight = $state(lightQuery.matches)
+let systemLight = $state(lightQuery?.matches ?? false)
 
-lightQuery.addEventListener('change', (e) => {
+lightQuery?.addEventListener('change', (e) => {
   systemLight = e.matches
 })
 
@@ -36,6 +43,7 @@ export const theme = {
   toggle() {
     const next: Theme = this.current === 'dark' ? 'light' : 'dark'
     chosen = next
+    if (!hasWindow) return
     document.documentElement.dataset.theme = next
     try {
       localStorage.setItem(STORAGE_KEY, next)
