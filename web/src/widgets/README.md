@@ -46,6 +46,7 @@ Each card on the Overview page is one component in this folder. The layout shell
 | `StorageWidget.svelte`     | Storage     | `types/storage.ts`     |
 | `NetworkWidget.svelte`     | Network     | `types/network.ts`     |
 | `PiHealthWidget.svelte`    | Pi health   | `types/pihealth.ts`    |
+| `ServicesWidget.svelte`    | Services    | `types/services.ts`    |
 | `ProcessesWidget.svelte`   | Processes   | `types/processes.ts`   |
 
-`ProcessesWidget` spans the full width of the grid; the others take one column each.
+`ProcessesWidget` spans the full width of the grid; the others take one column each. `ServicesWidget` renders nothing when the backend reports services as unavailable (no systemd).
