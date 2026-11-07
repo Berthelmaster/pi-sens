@@ -92,13 +92,15 @@
 <AlertBanner />
 
 <main>
-  {#if lazy}
-    {#await lazy then { default: LazyPage }}
-      <LazyPage />
-    {/await}
-  {:else}
-    <Page />
-  {/if}
+  {#key router.visit}
+    {#if lazy}
+      {#await lazy then { default: LazyPage }}
+        <LazyPage />
+      {/await}
+    {:else}
+      <Page />
+    {/if}
+  {/key}
 </main>
 
 <style>
