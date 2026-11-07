@@ -21,6 +21,8 @@
     height?: number
     /** Text for screen readers. */
     label: string
+    /** Links the crosshair with other charts that use the same key. */
+    syncKey?: string
   }
 
   let {
@@ -33,6 +35,7 @@
     max,
     height = 220,
     label,
+    syncKey,
   }: Props = $props()
 
   let chartSeries = $derived(series.map((s) => ({ label: s.label })))
@@ -57,6 +60,7 @@
       {max}
       {height}
       {label}
+      {syncKey}
     />
   {:else}
     <div class="placeholder" style:height="{height}px">
