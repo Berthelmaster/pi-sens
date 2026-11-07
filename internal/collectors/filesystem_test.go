@@ -165,10 +165,16 @@ func TestFilesystem(t *testing.T) {
 		t.Errorf("boot_firmware = %+v, want usage without inodes", boot)
 	}
 
-	media := data.Mounts[5]
-	if !media.ReadOnly {
-		t.Errorf("mnt_media ReadOnly = false, want true (mounted ro)")
+	// The fixture is the view from inside pisens.service, where
+	// ProtectSystem=strict has made every mount read-only. Only the SMB share
+	// is read-only for real, in its superblock options.
+	for _, m := range data.Mounts {
+		if want := m.Name == "mnt_media"; m.ReadOnly != want {
+			t.Errorf("%s ReadOnly = %v, want %v", m.Name, m.ReadOnly, want)
+		}
 	}
+
+	media := data.Mounts[5]
 	if media.filesystemUsage != nil || !strings.Contains(media.Error, "host is down") {
 		t.Errorf("mnt_media = %+v, want no usage and the statfs error", media)
 	}
@@ -195,8 +201,39 @@ func TestFilesystemJSON(t *testing.T) {
 	}
 }
 
+func TestFilesystemReadOnly(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		// ProtectSystem=strict: read-only in the service's namespace only.
+		{"mount ro, super rw", "24 1 179:2 / / ro,noatime master:1 - ext4 /dev/mmcblk0p2 rw", false},
+		// The kernel remounted the SD card read-only after I/O errors.
+		{"super ro", "24 1 179:2 / / rw,noatime shared:1 - ext4 /dev/mmcblk0p2 ro,errors=remount-ro", true},
+		{"both ro", "24 1 179:2 / / ro,noatime master:1 - ext4 /dev/mmcblk0p2 ro", true},
+		{"no optional fields", "24 1 179:2 / / rw - ext4 /dev/mmcblk0p2 rw,errors=remount-ro", false},
+		{"several optional fields", "24 1 179:2 / / ro shared:1 master:2 propagate_from:3 - ext4 /dev/mmcblk0p2 ro", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fsys := fstest.MapFS{"proc/self/mountinfo": {Data: []byte(tt.line + "\n")}}
+			stat := &fakeStatter{stats: map[string]fsStats{"/": simpleStats(1, 1)}}
+			_, data := collectFS(t, &filesystem{stat: stat}, fsys)
+			if len(data.Mounts) != 1 {
+				t.Fatalf("Mounts = %+v, want one", data.Mounts)
+			}
+			if m := data.Mounts[0]; m.Device != "/dev/mmcblk0p2" || m.Mountpoint != "/" || m.FSType != "ext4" || m.ReadOnly != tt.want {
+				t.Errorf("mount = %+v, want /dev/mmcblk0p2 on / (ext4), ReadOnly %v", m, tt.want)
+			}
+		})
+	}
+}
+
 func TestFilesystemNoMounts(t *testing.T) {
-	fsys := fstest.MapFS{"proc/self/mounts": {Data: []byte("proc /proc proc rw 0 0\ntmpfs /run tmpfs rw 0 0\n")}}
+	fsys := fstest.MapFS{"proc/self/mountinfo": {Data: []byte(
+		"22 1 0:20 / /proc rw,nosuid - proc proc rw\n" +
+			"23 1 0:21 / /run rw,nosuid shared:5 - tmpfs tmpfs rw,mode=755\n")}}
 	res, _ := collectFS(t, &filesystem{stat: &fakeStatter{}}, fsys)
 	if len(res.Series) != 0 {
 		t.Errorf("Series = %v, want none", res.Series)
@@ -208,9 +245,9 @@ func TestFilesystemNoMounts(t *testing.T) {
 }
 
 func TestFilesystemHungMount(t *testing.T) {
-	fsys := fstest.MapFS{"proc/self/mounts": {Data: []byte(
-		"/dev/mmcblk0p2 / ext4 rw 0 0\n" +
-			"nas:/export /mnt/nas nfs rw,hard 0 0\n")}}
+	fsys := fstest.MapFS{"proc/self/mountinfo": {Data: []byte(
+		"24 1 179:2 / / rw - ext4 /dev/mmcblk0p2 rw\n" +
+			"40 24 0:52 / /mnt/nas rw - nfs nas:/export rw,hard\n")}}
 	hang := make(chan struct{})
 	stat := &fakeStatter{
 		stats: map[string]fsStats{"/": simpleStats(1, 1), "/mnt/nas": simpleStats(1, 3)},
@@ -262,7 +299,7 @@ func TestFilesystemHungMount(t *testing.T) {
 }
 
 func TestFilesystemTimeoutFollowsContext(t *testing.T) {
-	fsys := fstest.MapFS{"proc/self/mounts": {Data: []byte("nas:/export /mnt/nas nfs rw 0 0\n")}}
+	fsys := fstest.MapFS{"proc/self/mountinfo": {Data: []byte("40 1 0:52 / /mnt/nas rw - nfs nas:/export rw\n")}}
 	hang := make(chan struct{})
 	defer close(hang)
 	f := &filesystem{stat: &fakeStatter{block: map[string]chan struct{}{"/mnt/nas": hang}}}
@@ -286,7 +323,9 @@ func TestFilesystemTimeoutFollowsContext(t *testing.T) {
 func TestFilesystemErrors(t *testing.T) {
 	tests := map[string]fstest.MapFS{
 		"missing mounts": {},
-		"short line":     {"proc/self/mounts": {Data: []byte("/dev/sda1 /mnt ext4\n")}},
+		"short line":     {"proc/self/mountinfo": {Data: []byte("40 1 8:1 / /mnt rw - ext4 /dev/sda1\n")}},
+		"no separator":   {"proc/self/mountinfo": {Data: []byte("40 1 8:1 / /mnt rw ext4 /dev/sda1 rw\n")}},
+		"mounts format":  {"proc/self/mountinfo": {Data: []byte("/dev/sda1 /mnt ext4 rw 0 0\n")}},
 	}
 	for name, fsys := range tests {
 		t.Run(name, func(t *testing.T) {

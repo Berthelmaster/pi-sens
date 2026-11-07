@@ -17,7 +17,7 @@ import (
 func init() { metrics.Register(&filesystem{}) }
 
 // filesystem reports the size, usage and inodes of every real filesystem
-// mounted on the machine. The mounts come from /proc/self/mounts and the
+// mounted on the machine. The mounts come from /proc/self/mountinfo and the
 // numbers from statfs(2).
 //
 // Only the filesystem types in filesystemTypes are reported, which leaves out
@@ -107,7 +107,7 @@ type filesystemUsage struct {
 	InodesUsedPct float64 `json:"inodes_used_pct"` // 0 on filesystems without inodes, such as vfat
 }
 
-// fsMount is one line of /proc/self/mounts.
+// fsMount is one line of /proc/self/mountinfo.
 type fsMount struct {
 	device, mountpoint, fstype string
 	readOnly                   bool
@@ -252,14 +252,27 @@ func fsUsageOf(st fsStats) filesystemUsage {
 	return u
 }
 
-// readMounts parses /proc/self/mounts:
+// readMounts parses /proc/self/mountinfo (see proc_pid_mountinfo(5)):
 //
-//	/dev/mmcblk0p2 / ext4 rw,noatime 0 0
+//	36 25 179:2 / / ro,noatime shared:1 - ext4 /dev/mmcblk0p2 rw
 //
-// Spaces, tabs, newlines and backslashes in the device and mount point are
+// The fields before the " - " separator describe the mount in this mount
+// namespace: its ID, the parent's ID, major:minor, the root of the mount
+// within the filesystem, the mount point, the per-mount options and zero or
+// more optional fields. The three after it describe the filesystem itself:
+// its type, the source and the superblock options.
+//
+// read_only comes from the superblock options, not the per-mount ones.
+// systemd's ProtectSystem=strict remounts everything read-only in the
+// service's namespace, which only sets the per-mount flag; what we want to
+// show is a filesystem that really is read-only, such as an SD card the
+// kernel switched to ro after I/O errors.
+//
+// Spaces, tabs, newlines and backslashes in the source and mount point are
 // octal-escaped by the kernel ("\040").
 func readMounts(fsys fs.FS) ([]fsMount, error) {
-	b, err := fs.ReadFile(fsys, "proc/self/mounts")
+	const path = "proc/self/mountinfo"
+	b, err := fs.ReadFile(fsys, path)
 	if err != nil {
 		return nil, err
 	}
@@ -271,26 +284,38 @@ func readMounts(fsys fs.FS) ([]fsMount, error) {
 		if len(fields) == 0 {
 			continue
 		}
-		if len(fields) < 4 {
-			return nil, fmt.Errorf("proc/self/mounts: want at least 4 fields, got %q", sc.Text())
-		}
-		readOnly := false
-		for _, opt := range strings.Split(fields[3], ",") {
-			if opt == "ro" {
-				readOnly = true
+		// The separator follows the six fixed fields and any optional ones.
+		sep := -1
+		for i := 6; i < len(fields); i++ {
+			if fields[i] == "-" {
+				sep = i
+				break
 			}
 		}
+		if sep < 0 || len(fields) < sep+4 {
+			return nil, fmt.Errorf("%s: want 6 fields, \" - \" and 3 more, got %q", path, sc.Text())
+		}
 		mounts = append(mounts, fsMount{
-			device:     fsUnescape(fields[0]),
-			mountpoint: fsUnescape(fields[1]),
-			fstype:     fields[2],
-			readOnly:   readOnly,
+			device:     fsUnescape(fields[sep+2]),
+			mountpoint: fsUnescape(fields[4]),
+			fstype:     fields[sep+1],
+			readOnly:   fsHasOption(fields[sep+3], "ro"),
 		})
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("proc/self/mounts: %w", err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return mounts, nil
+}
+
+// fsHasOption reports whether the comma-separated options contain opt.
+func fsHasOption(options, opt string) bool {
+	for _, o := range strings.Split(options, ",") {
+		if o == opt {
+			return true
+		}
+	}
+	return false
 }
 
 // filterMounts keeps the mounts worth reporting, in mount order:
@@ -360,7 +385,7 @@ func fsUniqueName(taken map[string]bool, name string) string {
 	return unique
 }
 
-// fsUnescape decodes the \ooo octal escapes of /proc/self/mounts.
+// fsUnescape decodes the \ooo octal escapes of /proc/self/mountinfo.
 func fsUnescape(s string) string {
 	if !strings.Contains(s, `\`) {
 		return s
