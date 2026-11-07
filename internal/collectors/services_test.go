@@ -397,8 +397,8 @@ func TestServicesUnavailable(t *testing.T) {
 	}
 }
 
-// servicesBusErr is what systemctl prints while the system D-Bus is down.
-var servicesBusErr = errors.New("systemctl: exit status 1: " +
+// errServicesBus is what systemctl prints while the system D-Bus is down.
+var errServicesBus = errors.New("systemctl: exit status 1: " +
 	"Failed to connect to bus: No such file or directory")
 
 // servicesSystemdFS is the root of a machine booted with systemd.
@@ -407,8 +407,8 @@ var servicesSystemdFS = fstest.MapFS{"run/systemd/system": {Mode: fs.ModeDir}}
 func TestServicesBusErrorOnSystemdHostIsRetried(t *testing.T) {
 	logs := captureLog(t)
 	runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
-		servicesJSONCmd:  {Err: servicesBusErr},
-		servicesPlainCmd: {Err: servicesBusErr},
+		servicesJSONCmd:  {Err: errServicesBus},
+		servicesPlainCmd: {Err: errServicesBus},
 	}}
 	s := &services{}
 	env := func(offset time.Duration) *metrics.Env {
@@ -460,7 +460,7 @@ func TestServicesBusErrorWithoutSystemdIsUnavailable(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			captureLog(t)
 			runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
-				servicesJSONCmd: {Err: servicesBusErr},
+				servicesJSONCmd: {Err: errServicesBus},
 			}}
 			s := &services{}
 			for i := 0; i < 3; i++ {
