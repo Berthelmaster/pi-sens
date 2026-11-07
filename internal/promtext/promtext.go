@@ -101,6 +101,8 @@ var rules = compileRules([]rule{
 	{pattern: "pi.ext5v_v", name: "ext5v_voltage_volts", help: "External 5 V supply voltage in volts."},
 	{pattern: "pi.throttled", name: "throttled", help: "1 while the firmware is throttling the CPU, otherwise 0."},
 	{pattern: "pi.undervoltage", name: "undervoltage", help: "1 while the supply voltage is too low, otherwise 0."},
+	{pattern: "power.undervoltage_events", name: "undervoltage_events", help: "Under-voltage events since pisens started."},
+	{pattern: "power.undervoltage_events_5m", name: "undervoltage_events_5m", help: "Under-voltage events in the last 5 minutes."},
 
 	{pattern: "energy.today_kwh", name: "energy_today_kilowatt_hours", help: "Energy used today since local midnight in kWh, from the PMIC power readings."},
 	{pattern: "energy.month_kwh", name: "energy_month_kilowatt_hours", help: "Energy used this calendar month in kWh, from the PMIC power readings."},

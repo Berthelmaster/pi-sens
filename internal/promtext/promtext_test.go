@@ -63,6 +63,8 @@ func TestLookup(t *testing.T) {
 		{"pi.ext5v_v", "pisens_ext5v_voltage_volts", nil},
 		{"pi.throttled", "pisens_throttled", nil},
 		{"pi.undervoltage", "pisens_undervoltage", nil},
+		{"power.undervoltage_events", "pisens_undervoltage_events", nil},
+		{"power.undervoltage_events_5m", "pisens_undervoltage_events_5m", nil},
 
 		{"energy.today_kwh", "pisens_energy_today_kilowatt_hours", nil},
 		{"energy.month_kwh", "pisens_energy_month_kilowatt_hours", nil},

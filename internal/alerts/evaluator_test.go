@@ -371,12 +371,13 @@ func TestDefaultRulesFire(t *testing.T) {
 	defer unsubscribe()
 
 	bad := map[string]float64{
-		"temp.cpu_c":       85,
-		"pi.undervoltage":  1,
-		"pi.throttled":     1,
-		"fs.root.used_pct": 95,
-		"mem.used_pct":     95,
-		"services.failed":  2,
+		"temp.cpu_c":                   85,
+		"pi.undervoltage":              1,
+		"pi.throttled":                 1,
+		"power.undervoltage_events_5m": 1,
+		"fs.root.used_pct":             95,
+		"mem.used_pct":                 95,
+		"services.failed":              2,
 	}
 	for at := time.Duration(0); at <= 2*time.Minute; at += 2 * time.Second {
 		e.Evaluate(snapAt(at, bad))
@@ -395,6 +396,7 @@ func TestDefaultRulesFire(t *testing.T) {
 		"memory-high@2m0s",
 		"services-failed@1m0s",
 		"throttled@30s",
+		"undervoltage-recent@0s",
 		"undervoltage@0s",
 	}
 	if !slices.Equal(fired, want) {
