@@ -9,10 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Berthelmaster/pi-sens/internal/alerts"
-	_ "github.com/Berthelmaster/pi-sens/internal/collectors" // registers the collectors
+	"github.com/Berthelmaster/pi-sens/internal/collectors" // also registers the collectors
 	"github.com/Berthelmaster/pi-sens/internal/config"
 	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
@@ -66,12 +67,15 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		"history_interval", cfg.HistoryInterval.String(),
 		"history_retention", fmt.Sprintf("raw %s, 1m %s, 15m %s",
 			cfg.HistoryRawRetention, cfg.History1mRetention, cfg.History15mRetention),
+		"watch_services", strings.Join(cfg.WatchServices, ","),
 	)
 	rulesFrom := "built-in"
 	if cfg.AlertsFile != "" {
 		rulesFrom = cfg.AlertsFile
 	}
 	logger.Info("alert rules loaded", "rules", len(rules), "from", rulesFrom)
+
+	collectors.SetWatchServices(cfg.WatchServices)
 
 	store, err := history.Open(ctx, cfg.DataDir)
 	if err != nil {

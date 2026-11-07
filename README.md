@@ -68,6 +68,7 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--history-1m-retention`  | `PISENS_HISTORY_1M_RETENTION`  | `168h` (7 days)   | How long 1 minute rollups are kept                        |
 | `--history-15m-retention` | `PISENS_HISTORY_15M_RETENTION` | `2160h` (90 days) | How long 15 minute rollups are kept                       |
 | `--alerts-file`           | `PISENS_ALERTS_FILE`           | (none)            | YAML file of alert rules that replaces the built-in rules |
+| `--watch-services`        | `PISENS_WATCH_SERVICES`        | (none)            | Comma separated systemd services to report the state of, e.g. `ssh,pisens` |
 
 Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT or SIGTERM.
 

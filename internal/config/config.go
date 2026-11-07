@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -40,6 +41,8 @@ const (
 	EnvHistory15mRetention = "PISENS_HISTORY_15M_RETENTION"
 
 	EnvAlerts = "PISENS_ALERTS_FILE"
+
+	EnvWatchServices = "PISENS_WATCH_SERVICES"
 )
 
 // Config is the resolved runtime configuration.
@@ -62,6 +65,9 @@ type Config struct {
 	// AlertsFile is a YAML file of alert rules that replaces the built-in
 	// ones. Empty means use the built-in rules.
 	AlertsFile string
+	// WatchServices are the systemd units whose state is reported on every
+	// sample, e.g. ["ssh", "pisens.service"]. Empty means none.
+	WatchServices []string
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -120,6 +126,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	}
 	cfg.AlertsFile = getenv(EnvAlerts)
 
+	watch := getenv(EnvWatchServices)
+
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
 	fs.SetOutput(output)
@@ -135,6 +143,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.DurationVar(&cfg.History15mRetention, "history-15m-retention", cfg.History15mRetention,
 		"how long 15 minute history averages are kept (env "+EnvHistory15mRetention+")")
 	fs.StringVar(&cfg.AlertsFile, "alerts-file", cfg.AlertsFile, "YAML file of alert rules that replaces the built-in rules (env "+EnvAlerts+")")
+	fs.StringVar(&watch, "watch-services", watch,
+		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
@@ -149,10 +159,23 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if fs.NArg() > 0 {
 		return Config{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
+	cfg.WatchServices = splitList(watch)
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// splitList splits a comma separated list, trimming spaces and dropping empty
+// items. It returns nil for an empty list.
+func splitList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (c Config) validate() error {
@@ -181,6 +204,11 @@ func (c Config) validate() error {
 	}
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data directory must not be empty"))
+	}
+	for _, name := range c.WatchServices {
+		if strings.ContainsAny(name, " \t/") {
+			errs = append(errs, fmt.Errorf("invalid service name %q in the watch list", name))
+		}
 	}
 	return errors.Join(errs...)
 }
