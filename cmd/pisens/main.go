@@ -145,6 +145,10 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	go func() { samplerDone <- sampler.Run(ctx) }()
 
 	srv := server.New(cfg.Listen, version, web.Dist(), logger, sampler, evaluator, store)
+	if cfg.Prometheus {
+		srv.EnablePrometheus()
+	}
+	logger.Info("prometheus metrics", "enabled", cfg.Prometheus, "path", "/metrics")
 	err = srv.Run(ctx)
 	stop() // stop the sampler too if the server failed on its own
 	if serr := <-samplerDone; serr != nil {

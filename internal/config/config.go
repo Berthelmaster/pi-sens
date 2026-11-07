@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,6 +50,8 @@ const (
 	EnvNotifyNtfy     = "PISENS_NOTIFY_NTFY"
 	EnvNotifyCooldown = "PISENS_NOTIFY_COOLDOWN"
 	EnvWatchServices  = "PISENS_WATCH_SERVICES"
+
+	EnvPrometheus = "PISENS_PROMETHEUS"
 )
 
 // Config is the resolved runtime configuration.
@@ -83,6 +86,8 @@ type Config struct {
 	// WatchServices are the systemd units whose state is reported on every
 	// sample, e.g. ["ssh", "pisens.service"]. Empty means none.
 	WatchServices []string
+	// Prometheus turns on GET /metrics in the Prometheus text format.
+	Prometheus bool
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -108,6 +113,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		History15mRetention: DefaultHistory15mRetention,
 
 		NotifyCooldown: DefaultNotifyCooldown,
+
+		Prometheus: true,
 	}
 
 	// Invalid environment values are reported after the flags are parsed, so
@@ -145,6 +152,14 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	cfg.AlertsFile = getenv(EnvAlerts)
 	cfg.NotifyWebhook = getenv(EnvNotifyWebhook)
 	cfg.NotifyNtfy = getenv(EnvNotifyNtfy)
+	if v := getenv(EnvPrometheus); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: want true or false", EnvPrometheus, v))
+		} else {
+			cfg.Prometheus = parsed
+		}
+	}
 
 	watch := getenv(EnvWatchServices)
 
@@ -171,6 +186,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"shortest time between two notifications that the same alert fires, 0 for none (env "+EnvNotifyCooldown+")")
 	fs.StringVar(&watch, "watch-services", watch,
 		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
+	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
+		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
