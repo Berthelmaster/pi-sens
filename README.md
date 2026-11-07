@@ -79,6 +79,9 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--net-skip`              | `PISENS_NET_SKIP`              | `lo,veth*,docker*,br-*` | Comma separated network interfaces to leave out, as names or prefixes ending in `*`, e.g. add `cni*,virbr*,tailscale0`; `--net-skip=` reports every interface |
 | `--energy-price`          | `PISENS_ENERGY_PRICE`          | (none)            | Electricity price per kWh; adds the cost to the [energy](#energy) section |
 | `--energy-currency`       | `PISENS_ENERGY_CURRENCY`       | (none)            | Currency shown with the energy cost, e.g. `DKK` |
+| `--netq`                  | `PISENS_NETQ`                  | `on`              | Measure [network quality](#network-quality) by pinging the gateway and internet hosts; `off` turns it off |
+| `--netq-targets`          | `PISENS_NETQ_TARGETS`          | `1.1.1.1,8.8.8.8` | Comma separated internet hosts to ping besides the default gateway, IPv4 addresses or host names; `--netq-targets=` pings only the gateway |
+| `--netq-interval`         | `PISENS_NETQ_INTERVAL`         | `10s`             | Time between two rounds of network quality pings |
 | `--prometheus`            | `PISENS_PROMETHEUS`            | `true`            | Serve [Prometheus metrics](#prometheus) at `/metrics`; `--prometheus=false` turns it off |
 | `--auth-user`             | `PISENS_AUTH_USER`             | (none)            | User name for HTTP basic auth, see [Authentication](#authentication) |
 | `--auth-password-hash`    | `PISENS_AUTH_PASSWORD_HASH`    | (none)            | bcrypt hash of the basic auth password, from `pisens hash-password` |
@@ -109,6 +112,29 @@ On a Pi 5 the `energy` section adds up how much energy the Pi uses, from the PMI
 `since` is the first reading ever. The cost fields only appear when `--energy-price` (or `PISENS_ENERGY_PRICE`) is set, as the price per kWh; `--energy-currency` is shown next to it. The series `energy.today_kwh` and `energy.month_kwh` go to the history like any other. The totals are kept in `<data-dir>/energy.json`, written at most once a minute and on shutdown, so they survive restarts and deploys; a restart within 2 minutes even counts the time pisens was down. On a Pi without PMIC readings (a Pi 4 or older, or not a Pi) the section is `{"available": false}`.
 
 The PMIC sees what it supplies to the board (SoC, RAM, wireless, HDMI and so on), not USB devices or its own losses, so the totals are an estimate that stays below what a meter at the wall would show.
+
+### Network quality
+
+The `netquality` section shows when the network or the internet was flaky. Every 10 seconds (`--netq-interval`) a background goroutine sends a burst of 5 pings, 200 ms apart, to the default gateway (the lowest metric default route in `/proc/net/route`, read again every round) and to each of `--netq-targets`, all targets at once. A ping that gets no answer within a second is lost. The sampler only reads the latest round, so a slow network never holds up a sample.
+
+```json
+"netquality": {
+  "available": true, "status": "good", "interval_s": 10, "probed_at": "2026-11-07T20:22:54Z",
+  "targets": [
+    {"name": "gateway", "key": "gateway", "kind": "gateway", "address": "192.168.1.1", "method": "icmp",
+     "latency_ms": 0.63, "jitter_ms": 0.12, "loss_pct": 0, "last_ok": "2026-11-07T20:22:54Z"},
+    {"name": "1.1.1.1", "key": "1_1_1_1", "kind": "internet", "address": "1.1.1.1", "method": "icmp",
+     "latency_ms": 19.31, "jitter_ms": 3.69, "loss_pct": 0, "last_ok": "2026-11-07T20:22:54Z"}
+  ]
+}
+```
+
+- `latency_ms` is the average round trip time of the answered pings and `jitter_ms` the average difference between two consecutive ones; both are `null` when too few came back. `loss_pct` is the share of the 5 pings that got no answer.
+- `last_ok` is the last round in which the target answered at all. `error` says why nothing came back when that is known, such as `no default route` or a host name that did not resolve.
+- `status` is `down` when every internet target lost every ping, `degraded` when any target lost a ping or averaged over 150 ms, and `good` otherwise. It is `pending` until the first round is done.
+- The series are `netq.<key>.latency_ms` (left out when nothing answered) and `netq.<key>.loss_pct`, so `netq.gateway.loss_pct` and `netq.1_1_1_1.latency_ms` go to the history and to Prometheus like any other.
+
+The pings are unprivileged ICMP echo requests, which Linux allows for the groups in the `net.ipv4.ping_group_range` sysctl. systemd opens that range to every group, so the service needs no extra capabilities. Where the kernel refuses them, pisens logs it once and times a TCP connect instead: port 443 for internet targets, and 53 then 80 for the gateway. A refused connection still took one round trip, so it counts as an answer. `method` says which one a target was measured with (`icmp` or `tcp`). Only IPv4 is probed. `--netq=off` (or `PISENS_NETQ=off`) stops the pings, and the section is then `{"available": false}`.
 
 ### History
 
