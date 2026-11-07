@@ -250,5 +250,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_ = encodeJSON(w, v)
+}
+
+// encodeJSON writes v as JSON followed by a newline, without HTML escaping,
+// so an alert's op reads ">" rather than "\u003e".
+func encodeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(v)
 }

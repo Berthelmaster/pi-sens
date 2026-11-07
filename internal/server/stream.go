@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -67,7 +66,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 		buf.Reset()
 		buf.WriteString("event: snapshot\ndata: ")
-		if err := json.NewEncoder(&buf).Encode(snap); err != nil {
+		if err := encodeJSON(&buf, snap); err != nil {
 			s.logger.Warn("encode snapshot for stream", "err", err)
 			return true
 		}
@@ -90,7 +89,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 		buf.Reset()
 		buf.WriteString("event: alerts\ndata: ")
-		if err := json.NewEncoder(&buf).Encode(set); err != nil {
+		if err := encodeJSON(&buf, set); err != nil {
 			s.logger.Warn("encode alerts for stream", "err", err)
 			return true
 		}
