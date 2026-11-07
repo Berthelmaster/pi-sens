@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stub sleep for the deploy.sh tests, so the 30 second health check is instant.
+exit 0

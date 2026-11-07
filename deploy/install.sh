@@ -6,6 +6,8 @@
 #   sudo deploy/install.sh --uninstall       remove the service and binary
 #   sudo deploy/install.sh --uninstall --purge
 #                                            also remove config, data and user
+#   sudo deploy/install.sh --with-deploy-hook [BINARY | --version vX.Y.Z]
+#                                            also set up automatic deployment
 #
 # BINARY is the pisens binary to install. Without it the script looks for
 # pisens next to itself, then bin/pisens-linux-arm64 and bin/pisens in the
@@ -21,11 +23,19 @@
 #
 # Running it again is safe. An upgrade replaces the binary and the unit,
 # keeps /etc/pisens/pisens.env and /var/lib/pisens, and restarts the service.
+#
+# --with-deploy-hook installs deploy/deploy.sh as /usr/local/sbin/pisens-deploy
+# and a sudoers rule that lets the GitHub Actions runner user (gh-runner, or
+# --runner-user) run it, and only it, as root. See "Automatic deployment" in
+# the README.
 set -euo pipefail
 
 readonly name=pisens
 readonly repo=Berthelmaster/pi-sens
 readonly bin_dst=/usr/local/bin/pisens
+readonly prev_dst=/usr/local/bin/pisens.prev
+readonly hook_dst=/usr/local/sbin/pisens-deploy
+readonly sudoers_dst=/etc/sudoers.d/pisens-deploy
 readonly unit_dst=/etc/systemd/system/pisens.service
 readonly dropin_dir=/etc/systemd/system/pisens.service.d
 readonly conf_dir=/etc/pisens
@@ -48,6 +58,7 @@ usage() {
 Usage: sudo $0 [BINARY]
        sudo $0 --version VERSION
        sudo $0 --uninstall [--purge]
+       sudo $0 --with-deploy-hook [--runner-user USER] [BINARY | --version VERSION]
 
 Installs BINARY as $bin_dst and runs it as the $name systemd service under
 its own system user. Without BINARY it looks for, in order:
@@ -61,8 +72,14 @@ Options:
                download release VERSION (e.g. v1.2.0, or latest for the newest
                non-pre-release) from github.com/$repo and install
                it instead of a local binary; needs curl
-  --uninstall  stop and disable the service, remove the unit and the binary;
-               keeps $conf_dir, $data_dir and the $name user
+  --with-deploy-hook
+               also install deploy/deploy.sh as $hook_dst and
+               $sudoers_dst, which lets the GitHub Actions runner
+               user run it as root for automatic deployment
+  --runner-user USER
+               the user the runner runs as (default gh-runner)
+  --uninstall  stop and disable the service, remove the unit, the binary and
+               the deploy hook; keeps $conf_dir, $data_dir and the $name user
   --purge      with --uninstall, also remove those
   -h, --help   show this help
 EOF
@@ -249,6 +266,38 @@ do_install() {
 	log "Logs:      journalctl -u $name -f"
 }
 
+# install_deploy_hook installs the deploy script and the sudoers rule that
+# lets runner_user run it as root.
+install_deploy_hook() {
+	local runner_user=$1
+	[[ -f $deploy_dir/deploy.sh ]] || die "$deploy_dir/deploy.sh is missing (releases before automatic deployment do not have it)"
+	[[ -f $deploy_dir/pisens-deploy.sudoers ]] || die "$deploy_dir/pisens-deploy.sudoers is missing"
+	command -v visudo >/dev/null || die "--with-deploy-hook needs sudo; install it with 'apt install sudo'"
+	if ! id -u "$runner_user" >/dev/null 2>&1; then
+		log "Warning: user $runner_user does not exist yet; create it before registering the runner"
+	fi
+
+	log "Installing $hook_dst"
+	local tmp
+	install -d -m 0755 "$(dirname "$hook_dst")"
+	tmp=$(mktemp "$hook_dst.XXXXXX")
+	install -o root -g root -m 0755 "$deploy_dir/deploy.sh" "$tmp"
+	mv -f "$tmp" "$hook_dst"
+
+	# sudo skips files in sudoers.d with a dot in the name, so the temporary
+	# file is never live, and a broken one never replaces a working rule.
+	log "Installing $sudoers_dst for user $runner_user"
+	install -d -m 0750 "$(dirname "$sudoers_dst")"
+	tmp=$(mktemp "$sudoers_dst.XXXXXX")
+	sed "s/^gh-runner /$runner_user /" "$deploy_dir/pisens-deploy.sudoers" >"$tmp"
+	chmod 0440 "$tmp"
+	if ! visudo -cqf "$tmp" >/dev/null; then
+		rm -f "$tmp"
+		die "the generated sudoers rule does not pass visudo -c"
+	fi
+	mv -f "$tmp" "$sudoers_dst"
+}
+
 do_uninstall() {
 	local purge=$1
 	if [[ -f $unit_dst ]]; then
@@ -265,6 +314,11 @@ do_uninstall() {
 	if [[ -e $bin_dst ]]; then
 		log "Removing $bin_dst"
 		rm -f "$bin_dst"
+	fi
+	rm -f "$prev_dst"
+	if [[ -e $hook_dst || -e $sudoers_dst ]]; then
+		log "Removing the deploy hook ($hook_dst, $sudoers_dst)"
+		rm -f "$hook_dst" "$sudoers_dst"
 	fi
 
 	if ! $purge; then
@@ -284,11 +338,18 @@ do_uninstall() {
 }
 
 main() {
-	local uninstall=false purge=false binary="" release=""
+	local uninstall=false purge=false binary="" release="" hook=false runner_user=""
 	while [[ $# -gt 0 ]]; do
 		case $1 in
 		--uninstall) uninstall=true ;;
 		--purge) purge=true ;;
+		--with-deploy-hook) hook=true ;;
+		--runner-user)
+			[[ $# -ge 2 && -n $2 ]] || die "--runner-user needs a user name"
+			runner_user=$2
+			shift
+			;;
+		--runner-user=*) runner_user=${1#--runner-user=} ;;
 		--version)
 			[[ $# -ge 2 && -n $2 ]] || die "--version needs a version, e.g. --version v0.1.0 or --version latest"
 			release=$2
@@ -323,6 +384,17 @@ main() {
 	if [[ -n $release && -n $binary ]]; then
 		die "give either a binary or --version, not both"
 	fi
+	if $hook && $uninstall; then
+		die "--with-deploy-hook does not work with --uninstall, which removes the hook"
+	fi
+	if [[ -n $runner_user ]] && ! $hook; then
+		die "--runner-user only works together with --with-deploy-hook"
+	fi
+	runner_user=${runner_user:-gh-runner}
+	[[ $runner_user =~ ^[a-z_][a-z0-9_-]*$ ]] || die "invalid user name $runner_user"
+	if [[ $runner_user == root || $runner_user == "$name" ]]; then
+		die "the runner must not run as $runner_user; use a dedicated user such as gh-runner"
+	fi
 	[[ $(id -u) -eq 0 ]] || die "run as root, e.g. sudo $0"
 	[[ -d /run/systemd/system ]] || die "systemd is not running on this machine"
 
@@ -333,6 +405,9 @@ main() {
 		do_install "$src_binary"
 	else
 		do_install "$binary"
+	fi
+	if $hook; then
+		install_deploy_hook "$runner_user"
 	fi
 }
 

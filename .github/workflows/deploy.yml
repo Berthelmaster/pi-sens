@@ -1,0 +1,132 @@
+name: Deploy
+
+# Deploys main to the Raspberry Pi through the self-hosted runner on it: when
+# CI passes for a push to main, the job downloads that run's
+# pisens-linux-arm64 artifact and hands it to /usr/local/sbin/pisens-deploy
+# (deploy/deploy.sh), which swaps the binary, checks /api/health and rolls
+# back on failure. Running the workflow by hand (workflow_dispatch) redeploys
+# the newest successful CI build of main. See "Automatic deployment" in the
+# README for the one-time setup on the Pi.
+#
+# Never add pull_request or pull_request_target triggers here, and never give
+# another workflow the pisens label: whatever runs on that runner runs on the
+# Pi, and a pull request from a fork must not get there. workflow_run always
+# uses this file from main, and the job only runs for CI runs of pushes to
+# main in this repository.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  # actions: read to list CI runs and download their artifacts.
+  actions: read
+  contents: read
+
+# One deploy at a time, and a queued one is never cancelled half way.
+concurrency:
+  group: deploy-pi
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Deploy to the Pi
+    if: >-
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: [self-hosted, linux, ARM64, pisens]
+    timeout-minutes: 10
+    steps:
+      # Picks the CI run to deploy and checks that its artifact was built from
+      # the expected commit. A CI run that finished late, after a newer commit
+      # already passed, is skipped so the Pi never goes back to older code.
+      - name: Find the CI build
+        id: build
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const artifactName = 'pisens-linux-arm64';
+            const { data: { workflow_runs: [latest] } } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo,
+              workflow_id: 'ci.yml',
+              branch: 'main',
+              event: 'push',
+              status: 'success',
+              per_page: 1,
+            });
+
+            let run;
+            if (context.eventName === 'workflow_run') {
+              run = context.payload.workflow_run;
+              if (latest && latest.run_number > run.run_number) {
+                core.notice(`Skipped: CI run ${latest.run_number} for ${latest.head_sha} is newer and deploys instead.`);
+                core.setOutput('skip', 'true');
+                return;
+              }
+            } else {
+              run = latest;
+              if (!run) {
+                core.setFailed('There is no successful CI run for a push to main to deploy.');
+                return;
+              }
+            }
+
+            const { data: { artifacts } } = await github.rest.actions.listWorkflowRunArtifacts({
+              ...context.repo,
+              run_id: run.id,
+              name: artifactName,
+            });
+            const artifact = artifacts.find((a) => a.name === artifactName && !a.expired);
+            if (!artifact) {
+              core.setFailed(`CI run ${run.id} has no ${artifactName} artifact (it may have expired).`);
+              return;
+            }
+            if (artifact.workflow_run?.head_sha !== run.head_sha) {
+              core.setFailed(`The ${artifactName} artifact of CI run ${run.id} is from ${artifact.workflow_run?.head_sha}, not ${run.head_sha}.`);
+              return;
+            }
+
+            core.info(`Deploying ${run.head_sha} from CI run ${run.html_url}`);
+            core.setOutput('run-id', String(run.id));
+            core.setOutput('run-url', run.html_url);
+            core.setOutput('sha', run.head_sha);
+
+      - name: Download the binary
+        if: steps.build.outputs.skip != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: pisens-linux-arm64
+          path: ${{ runner.temp }}/pisens-deploy
+          run-id: ${{ steps.build.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      # The runner user may run pisens-deploy as root and nothing else (see
+      # deploy/pisens-deploy.sudoers). -n fails at once instead of waiting
+      # for a password if that rule is missing.
+      - name: Deploy
+        if: steps.build.outputs.skip != 'true'
+        env:
+          BINARY: ${{ runner.temp }}/pisens-deploy/pisens-linux-arm64
+          SHA: ${{ steps.build.outputs.sha }}
+          RUN_URL: ${{ steps.build.outputs.run-url }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ steps.build.outputs.sha }}
+        run: |
+          sudo -n /usr/local/sbin/pisens-deploy --commit "$SHA" "$BINARY" | tee "$RUNNER_TEMP/pisens-deploy.log"
+          version=$(sed -n 's/^version: //p' "$RUNNER_TEMP/pisens-deploy.log")
+          {
+            echo "### Deployed pisens ${version} to the Pi"
+            echo
+            echo "- Version: \`${version}\`"
+            echo "- Commit: [\`${SHA:0:7}\`](${COMMIT_URL})"
+            echo "- Build: ${RUN_URL}"
+          } >>"$GITHUB_STEP_SUMMARY"
