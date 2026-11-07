@@ -16,6 +16,7 @@ import (
 	"github.com/Berthelmaster/pi-sens/internal/auth"
 	"github.com/Berthelmaster/pi-sens/internal/collectors" // also registers the collectors
 	"github.com/Berthelmaster/pi-sens/internal/config"
+	"github.com/Berthelmaster/pi-sens/internal/energy"
 	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 	"github.com/Berthelmaster/pi-sens/internal/notify"
@@ -117,6 +118,19 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	}
 	store.SetRetention(retention)
 
+	// The energy meter is fed by the power collector. A broken state file is
+	// moved aside and the totals start from zero rather than stopping
+	// pisens over them.
+	meter, err := energy.Open(cfg.DataDir, energy.Options{
+		MaxGap: max(energy.DefaultMaxGap, 3*cfg.Interval),
+		Logger: logger,
+	})
+	if err != nil {
+		logger.Warn("energy totals", "err", err)
+	}
+	collectors.SetEnergy(meter, cfg.EnergyPrice, cfg.EnergyCurrency)
+	logger.Info("energy meter", "path", meter.Path(), "price", cfg.EnergyPrice, "currency", cfg.EnergyCurrency)
+
 	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
 
 	// Subscribe before the sampler starts so the first snapshot is stored too.
@@ -181,6 +195,10 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	stop() // stop the sampler too if the server failed on its own
 	if serr := <-samplerDone; serr != nil {
 		logger.Error("sampler failed", "err", serr)
+	}
+	// The sampler has stopped, so no reading arrives after this.
+	if merr := meter.Close(); merr != nil {
+		logger.Error("save energy totals", "err", merr)
 	}
 	<-evaluatorDone
 	<-dispatcherDone

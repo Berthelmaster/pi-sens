@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -73,6 +74,9 @@ const (
 	EnvProcessCmdline = "PISENS_PROCESS_CMDLINE"
 	EnvNetSkip        = "PISENS_NET_SKIP"
 
+	EnvEnergyPrice    = "PISENS_ENERGY_PRICE"
+	EnvEnergyCurrency = "PISENS_ENERGY_CURRENCY"
+
 	EnvPrometheus       = "PISENS_PROMETHEUS"
 	EnvAuthUser         = "PISENS_AUTH_USER"
 	EnvAuthPasswordHash = "PISENS_AUTH_PASSWORD_HASH"
@@ -117,6 +121,12 @@ type Config struct {
 	// NetSkip are the network interfaces the network collector leaves out:
 	// names, or name prefixes when they end in "*". Empty means none.
 	NetSkip []string
+	// EnergyPrice is the electricity price per kWh. Above zero, the energy
+	// section adds what today and this month cost. Zero means no cost.
+	EnergyPrice float64
+	// EnergyCurrency is shown next to the cost, e.g. "DKK". Free text, may
+	// be empty.
+	EnergyCurrency string
 	// Prometheus turns on GET /metrics in the Prometheus text format.
 	Prometheus bool
 	// AuthUser and AuthPasswordHash turn on HTTP basic auth for every route
@@ -198,6 +208,15 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if v := getenv(EnvProcessCmdline); v != "" {
 		cfg.ProcessCmdline = v
 	}
+	if v := getenv(EnvEnergyPrice); v != "" {
+		parsed, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: want a number such as 2.45", EnvEnergyPrice, v))
+		} else {
+			cfg.EnergyPrice = parsed
+		}
+	}
+	cfg.EnergyCurrency = getenv(EnvEnergyCurrency)
 	if v := getenv(EnvPrometheus); v != "" {
 		parsed, err := strconv.ParseBool(v)
 		if err != nil {
@@ -248,6 +267,10 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"how much of the top processes' command lines to show: off (name only), redacted (secrets hidden) or full (env "+EnvProcessCmdline+")")
 	fs.StringVar(&netSkip, "net-skip", netSkip,
 		"comma separated network interfaces to leave out, names or prefixes ending in *; --net-skip= reports all (env "+EnvNetSkip+")")
+	fs.Float64Var(&cfg.EnergyPrice, "energy-price", cfg.EnergyPrice,
+		"electricity price per kWh, to show what the Pi's energy use costs; 0 for none (env "+EnvEnergyPrice+")")
+	fs.StringVar(&cfg.EnergyCurrency, "energy-currency", cfg.EnergyCurrency,
+		"currency shown with the energy cost, e.g. DKK (env "+EnvEnergyCurrency+")")
 	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
 		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
 	fs.StringVar(&cfg.AuthUser, "auth-user", cfg.AuthUser,
@@ -317,6 +340,9 @@ func (c Config) validate() error {
 	}
 	if c.NotifyCooldown < 0 {
 		errs = append(errs, fmt.Errorf("notify cooldown must not be negative, got %s", c.NotifyCooldown))
+	}
+	if c.EnergyPrice < 0 || math.IsNaN(c.EnergyPrice) || math.IsInf(c.EnergyPrice, 0) {
+		errs = append(errs, fmt.Errorf("energy price must be zero or a positive number, got %v", c.EnergyPrice))
 	}
 	if err := checkURL(c.NotifyWebhook); err != nil {
 		errs = append(errs, fmt.Errorf("notify webhook %w", err))

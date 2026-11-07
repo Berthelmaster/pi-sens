@@ -102,6 +102,9 @@ var rules = compileRules([]rule{
 	{pattern: "pi.throttled", name: "throttled", help: "1 while the firmware is throttling the CPU, otherwise 0."},
 	{pattern: "pi.undervoltage", name: "undervoltage", help: "1 while the supply voltage is too low, otherwise 0."},
 
+	{pattern: "energy.today_kwh", name: "energy_today_kilowatt_hours", help: "Energy used today since local midnight in kWh, from the PMIC power readings."},
+	{pattern: "energy.month_kwh", name: "energy_month_kilowatt_hours", help: "Energy used this calendar month in kWh, from the PMIC power readings."},
+
 	{pattern: "services.failed", name: "services_failed", help: "Number of failed systemd services."},
 
 	{pattern: "system.uptime_s", name: "uptime_seconds", help: "System uptime in seconds."},

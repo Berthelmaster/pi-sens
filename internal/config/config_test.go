@@ -247,6 +247,33 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
+			name: "energy price from env",
+			env:  map[string]string{EnvEnergyPrice: "2.45", EnvEnergyCurrency: "DKK"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				EnergyPrice:    2.45, EnergyCurrency: "DKK",
+				Prometheus: true,
+			},
+		},
+		{
+			name: "energy price flag wins over env",
+			args: []string{"--energy-price", "0.3", "--energy-currency=EUR"},
+			env:  map[string]string{EnvEnergyPrice: "2.45", EnvEnergyCurrency: "DKK"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NetSkip:        defaultNetSkip,
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				EnergyPrice:    0.3, EnergyCurrency: "EUR",
+				Prometheus: true,
+			},
+		},
+		{
 			name: "prometheus off by flag",
 			args: []string{"--prometheus=false"},
 			want: Config{
@@ -331,6 +358,9 @@ func TestLoadErrors(t *testing.T) {
 		{name: "space in net skip", args: []string{"--net-skip", "lo,veth *"}},
 		{name: "star inside net skip", env: map[string]string{EnvNetSkip: "lo,v*th"}},
 		{name: "path as net skip", env: map[string]string{EnvNetSkip: "/sys/class/net/lo"}},
+		{name: "bad env energy price", env: map[string]string{EnvEnergyPrice: "2,45"}},
+		{name: "negative energy price", args: []string{"--energy-price", "-1"}},
+		{name: "NaN energy price", env: map[string]string{EnvEnergyPrice: "NaN"}},
 		{name: "bad env prometheus", env: map[string]string{EnvPrometheus: "maybe"}},
 		{name: "positional args", args: []string{"extra"}},
 		{name: "auth user without hash", args: []string{"--auth-user", "admin"}},
