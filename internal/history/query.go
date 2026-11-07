@@ -76,7 +76,7 @@ type Result struct {
 type source struct {
 	resolution Resolution
 	bucket     int64 // the table's own resolution in seconds
-	rollup     bool
+	rollup     bool  // rows carry avg, min, max and n rather than one value
 	query      string
 }
 
