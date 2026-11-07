@@ -38,7 +38,7 @@ Each card on the Overview page is one component in this folder. The layout shell
 
 | File                       | Area        | Types file             |
 | -------------------------- | ----------- | ---------------------- |
-| `SystemInfoWidget.svelte`  | System info | `types/system.ts`      |
+| `SystemInfoWidget.svelte`  | System info | `types/sysinfo.ts`     |
 | `CpuWidget.svelte`         | CPU         | `types/cpu.ts`         |
 | `MemoryWidget.svelte`      | Memory      | `types/memory.ts`      |
 | `TemperatureWidget.svelte` | Temperature | `types/temperature.ts` |

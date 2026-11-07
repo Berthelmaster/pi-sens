@@ -3,11 +3,13 @@
   import ConnectionStatus from './components/ConnectionStatus.svelte'
   import Hostname from './components/Hostname.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
+  import { snapshot } from './lib/live'
   import { followLink, router } from './lib/router.svelte'
   import ChartsDemo from './pages/ChartsDemo.svelte'
   import History from './pages/History.svelte'
   import NotFound from './pages/NotFound.svelte'
   import Overview from './pages/Overview.svelte'
+  import { hostnameOf } from './types/sysinfo'
 
   interface Route {
     path: string
@@ -31,8 +33,13 @@
   )
   let Page = $derived(active?.page ?? NotFound)
 
+  let hostname = $derived(hostnameOf($snapshot))
+
+  // Name the tab after the Pi once its hostname is known, so several Pis open
+  // side by side can be told apart.
   $effect(() => {
-    document.title = active ? `${active.label} · pisens` : 'pisens'
+    if (hostname) document.title = `${hostname} – pisens`
+    else document.title = active ? `${active.label} · pisens` : 'pisens'
   })
 </script>
 
