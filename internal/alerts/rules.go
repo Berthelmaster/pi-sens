@@ -105,6 +105,9 @@ func DefaultRules() []Rule {
 		{Name: "disk-full", Series: "fs.*.used_pct", Op: OpAbove, Threshold: 90, Severity: SeverityWarning},
 		{Name: "memory-high", Series: "mem.used_pct", Op: OpAbove, Threshold: 90, For: 2 * time.Minute, Severity: SeverityWarning},
 		{Name: "services-failed", Series: "services.failed", Op: OpAbove, Threshold: 0, For: time.Minute, Severity: SeverityWarning},
+		{Name: "internet-down", Series: "netq.internet_loss_pct", Op: OpAbove, Threshold: 99, For: time.Minute, Severity: SeverityCritical},
+		{Name: "internet-slow", Series: "netq.internet_latency_ms", Op: OpAbove, Threshold: 150, For: 5 * time.Minute, Severity: SeverityWarning},
+		{Name: "dns-failing", Series: "netq.dns.failing", Op: OpAbove, Threshold: 0, For: 2 * time.Minute, Severity: SeverityWarning},
 	}
 }
 

@@ -218,6 +218,9 @@ func TestDefaultRuleNames(t *testing.T) {
 		"disk-full",
 		"memory-high",
 		"services-failed",
+		"internet-down",
+		"internet-slow",
+		"dns-failing",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("default rules = %v, want %v (update the README alerts table too)", got, want)
@@ -307,6 +310,199 @@ func TestServicesFailedRule(t *testing.T) {
 	}
 	if set := e.Alerts(); len(set.Firing) != 0 {
 		t.Errorf("firing after 58s = %+v, want none", set.Firing)
+	}
+}
+
+// runTimeline feeds rules a snapshot every 2s from 0 to end, with the series
+// series(at) returns, and returns the transitions as "rule series from>to @at".
+func runTimeline(t *testing.T, rules []Rule, end time.Duration, series func(at time.Duration) map[string]float64) []string {
+	t.Helper()
+	e := NewEvaluator(rules, discardLogger())
+	ch, unsubscribe := e.SubscribeTransitions()
+	defer unsubscribe()
+	var got []string
+	for at := time.Duration(0); at <= end; at += 2 * time.Second {
+		e.Evaluate(snapAt(at, series(at)))
+		// Drain as we go: a long timeline has more transitions than
+		// the subscriber buffer holds.
+		for _, tr := range drain(ch) {
+			got = append(got, formatTransition(tr)+" @"+tr.At.Sub(t0).String())
+		}
+	}
+	return got
+}
+
+// until returns a timeline with series key at bad up to (not including)
+// switchAt and at good from then on.
+func until(key string, bad float64, switchAt time.Duration, good float64) func(time.Duration) map[string]float64 {
+	return func(at time.Duration) map[string]float64 {
+		if at < switchAt {
+			return map[string]float64{key: bad}
+		}
+		return map[string]float64{key: good}
+	}
+}
+
+func TestInternetDownRule(t *testing.T) {
+	r := defaultRule(t, "internet-down")
+	want := Rule{Name: "internet-down", Series: "netq.internet_loss_pct", Op: OpAbove, Threshold: 99, For: time.Minute, Severity: SeverityCritical}
+	if r != want {
+		t.Fatalf("internet-down = %s, want %s", r, want)
+	}
+
+	tests := []struct {
+		name     string
+		timeline func(time.Duration) map[string]float64
+		want     []string
+	}{
+		{
+			name:     "every internet target lost every ping for 90s",
+			timeline: until("netq.internet_loss_pct", 100, 90*time.Second, 0),
+			want: []string{
+				"internet-down netq.internet_loss_pct inactive>pending @0s",
+				"internet-down netq.internet_loss_pct pending>firing @1m0s",
+				"internet-down netq.internet_loss_pct firing>resolved @1m30s",
+			},
+		},
+		{
+			name:     "down for less than a minute",
+			timeline: until("netq.internet_loss_pct", 100, 40*time.Second, 0),
+			want: []string{
+				"internet-down netq.internet_loss_pct inactive>pending @0s",
+				"internet-down netq.internet_loss_pct pending>inactive @40s",
+			},
+		},
+		{
+			// One target still answers a ping now and then.
+			name:     "heavy loss but not all",
+			timeline: until("netq.internet_loss_pct", 80, 2*time.Minute, 0),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runTimeline(t, []Rule{r}, 3*time.Minute, tt.timeline)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("transitions = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInternetSlowRule(t *testing.T) {
+	r := defaultRule(t, "internet-slow")
+	want := Rule{Name: "internet-slow", Series: "netq.internet_latency_ms", Op: OpAbove, Threshold: 150, For: 5 * time.Minute, Severity: SeverityWarning}
+	if r != want {
+		t.Fatalf("internet-slow = %s, want %s", r, want)
+	}
+
+	tests := []struct {
+		name     string
+		timeline func(time.Duration) map[string]float64
+		want     []string
+	}{
+		{
+			name:     "slow for 6m",
+			timeline: until("netq.internet_latency_ms", 210, 6*time.Minute, 20),
+			want: []string{
+				"internet-slow netq.internet_latency_ms inactive>pending @0s",
+				"internet-slow netq.internet_latency_ms pending>firing @5m0s",
+				"internet-slow netq.internet_latency_ms firing>resolved @6m0s",
+			},
+		},
+		{
+			name:     "at the threshold",
+			timeline: until("netq.internet_latency_ms", 150, 7*time.Minute, 20),
+		},
+		{
+			// Nothing answers, so there is no latency: that is
+			// internet-down's job.
+			name: "internet down",
+			timeline: func(time.Duration) map[string]float64 {
+				return map[string]float64{"netq.internet_loss_pct": 100}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runTimeline(t, []Rule{r}, 7*time.Minute, tt.timeline)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("transitions = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDNSFailingRule(t *testing.T) {
+	r := defaultRule(t, "dns-failing")
+	want := Rule{Name: "dns-failing", Series: "netq.dns.failing", Op: OpAbove, Threshold: 0, For: 2 * time.Minute, Severity: SeverityWarning}
+	if r != want {
+		t.Fatalf("dns-failing = %s, want %s", r, want)
+	}
+
+	tests := []struct {
+		name     string
+		timeline func(time.Duration) map[string]float64
+		want     []string
+	}{
+		{
+			name:     "failing for 3m",
+			timeline: until("netq.dns.failing", 1, 3*time.Minute, 0),
+			want: []string{
+				"dns-failing netq.dns.failing inactive>pending @0s",
+				"dns-failing netq.dns.failing pending>firing @2m0s",
+				"dns-failing netq.dns.failing firing>resolved @3m0s",
+			},
+		},
+		{
+			name:     "one failed lookup",
+			timeline: until("netq.dns.failing", 1, 10*time.Second, 0),
+			want: []string{
+				"dns-failing netq.dns.failing inactive>pending @0s",
+				"dns-failing netq.dns.failing pending>inactive @10s",
+			},
+		},
+		{
+			name:     "lookups work",
+			timeline: until("netq.dns.failing", 0, 0, 0),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runTimeline(t, []Rule{r}, 4*time.Minute, tt.timeline)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("transitions = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNetworkRulesWithoutNetquality checks that the network rules stay quiet
+// when netquality is off or has not finished a round: it then publishes no
+// netq series at all.
+func TestNetworkRulesWithoutNetquality(t *testing.T) {
+	rules := []Rule{defaultRule(t, "internet-down"), defaultRule(t, "internet-slow"), defaultRule(t, "dns-failing")}
+	got := runTimeline(t, rules, 10*time.Minute, func(time.Duration) map[string]float64 {
+		return map[string]float64{"temp.cpu_c": 50, "mem.used_pct": 40}
+	})
+	if len(got) != 0 {
+		t.Errorf("transitions = %q, want none", got)
+	}
+
+	// A series that goes away mid-outage, after a collector error say,
+	// ends the alert after StaleSamples snapshots.
+	got = runTimeline(t, rules, 2*time.Minute, func(at time.Duration) map[string]float64 {
+		if at < 70*time.Second {
+			return map[string]float64{"netq.internet_loss_pct": 100}
+		}
+		return map[string]float64{}
+	})
+	want := []string{
+		"internet-down netq.internet_loss_pct inactive>pending @0s",
+		"internet-down netq.internet_loss_pct pending>firing @1m0s",
+		"internet-down netq.internet_loss_pct firing>resolved @1m14s",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("transitions = %q, want %q", got, want)
 	}
 }
 

@@ -165,6 +165,7 @@ The `netquality` section shows when the network or the internet was flaky. Every
 - `last_ok` is the last round in which the target answered at all. `error` says why nothing came back when that is known, such as `no default route` or a host name that did not resolve.
 - `status` is `down` when every internet target lost every ping, `degraded` when any target lost a ping or averaged over 150 ms or the DNS lookup failed, and `good` otherwise. It is `pending` until the first round is done.
 - The series are `netq.<key>.latency_ms` (left out when nothing answered) and `netq.<key>.loss_pct`, so `netq.gateway.loss_pct` and `netq.1_1_1_1.latency_ms` go to the history and to Prometheus like any other.
+- Two more series sum up the internet targets for the [alerts](#alerts): `netq.internet_loss_pct` is the lowest loss of any internet target, so it is 100 only when every one of them lost every ping, and `netq.internet_latency_ms` is the average latency of the internet targets that answered (left out when none did). Both are left out when `--netq-targets` is empty.
 
 The pings are unprivileged ICMP echo requests, which Linux allows for the groups in the `net.ipv4.ping_group_range` sysctl. systemd opens that range to every group, so the service needs no extra capabilities. Where the kernel refuses them, pisens logs it once and times a TCP connect instead: port 443 for internet targets, and 53 then 80 for the gateway. A refused connection still took one round trip, so it counts as an answer. `method` says which one a target was measured with (`icmp` or `tcp`). Only IPv4 is probed. `--netq=off` (or `PISENS_NETQ=off`) stops the pings, and the section is then `{"available": false}`.
 
@@ -175,7 +176,7 @@ Many "the internet is slow" moments are really DNS, so every round also looks up
 - `ok` is whether the name resolved to an IPv4 address. A lookup fails when no answer comes within 2 seconds, when the answer is an error (`NXDOMAIN`, `SERVFAIL`, `REFUSED` and so on, shown in `error`), or when it holds no IPv4 address.
 - `lookup_ms` is the time from the query to the answer, `null` when the lookup failed. `resolver` is the nameserver that was asked, `last_ok` the last round the lookup worked and `failures` the failed lookups since pisens started.
 - A failed lookup makes `status` `degraded` even when every ping comes back.
-- The series are `netq.dns.lookup_ms` (left out when the lookup failed) and `netq.dns.failures`. No target gets the key `dns`; a target with that name becomes `dns_2`.
+- The series are `netq.dns.lookup_ms` (left out when the lookup failed), `netq.dns.failures` and `netq.dns.failing`, which is 1 when the latest lookup failed and 0 when it worked. No target gets the key `dns`; a target with that name becomes `dns_2`.
 
 ### History
 
@@ -294,23 +295,28 @@ pisens checks alert rules against every sample. A rule compares one series, or e
 
 Without a rules file these built-in rules apply:
 
-| Name                  | Rule                                | Severity |
-|-----------------------|-------------------------------------|----------|
-| `cpu-temp-high`       | `temp.cpu_c > 75` for 1m            | warning  |
-| `cpu-temp-critical`   | `temp.cpu_c > 82` for 30s           | critical |
-| `undervoltage`        | `pi.undervoltage > 0`               | critical |
-| `undervoltage-recent` | `power.undervoltage_events_5m > 0`  | warning  |
-| `rtc-battery-low`     | `power.rtc_battery_v < 2.6` for 10m | warning  |
-| `throttled`           | `pi.throttled > 0` for 30s          | warning  |
-| `disk-full`           | `fs.*.used_pct > 90`                | warning  |
-| `memory-high`         | `mem.used_pct > 90` for 2m          | warning  |
-| `services-failed`     | `services.failed > 0` for 1m        | warning  |
+| Name                  | Rule                                    | Severity |
+|-----------------------|-----------------------------------------|----------|
+| `cpu-temp-high`       | `temp.cpu_c > 75` for 1m                | warning  |
+| `cpu-temp-critical`   | `temp.cpu_c > 82` for 30s               | critical |
+| `undervoltage`        | `pi.undervoltage > 0`                   | critical |
+| `undervoltage-recent` | `power.undervoltage_events_5m > 0`      | warning  |
+| `rtc-battery-low`     | `power.rtc_battery_v < 2.6` for 10m     | warning  |
+| `throttled`           | `pi.throttled > 0` for 30s              | warning  |
+| `disk-full`           | `fs.*.used_pct > 90`                    | warning  |
+| `memory-high`         | `mem.used_pct > 90` for 2m              | warning  |
+| `services-failed`     | `services.failed > 0` for 1m            | warning  |
+| `internet-down`       | `netq.internet_loss_pct > 99` for 1m    | critical |
+| `internet-slow`       | `netq.internet_latency_ms > 150` for 5m | warning  |
+| `dns-failing`         | `netq.dns.failing > 0` for 2m           | warning  |
 
 `undervoltage-recent` fires for 5 minutes after every under-voltage event (see [Power supply](#power-supply)), so a dip that is over before the next sample still shows up.
 
 `rtc-battery-low` fires when the RTC backup battery (see [RTC battery](#rtc-battery)) has been below 2.6 V for 10 minutes. Without a battery fitted there is no `power.rtc_battery_v` series, so it never fires.
 
 `services-failed` fires when a systemd service has been in the failed state for a minute; the **Services** section shows which one. On a machine without systemctl there is no `services.failed` series, so it never fires.
+
+`internet-down`, `internet-slow` and `dns-failing` watch the [network quality](#network-quality) probes. `internet-down` fires when every internet target has lost every ping (100 % loss; the rules only know `>` and `<`, hence `> 99`) for a minute, `internet-slow` when the internet targets that answer have averaged over 150 ms for 5 minutes, and `dns-failing` when every DNS lookup has failed for 2 minutes. While the internet is down nothing answers, so `internet-slow` stays quiet and `internet-down` speaks for both; `dns-failing` usually fires too, unless the resolver answers from its cache. With `--netq=off`, before the first probe round, or without internet targets (`--netq-targets=`) the series are not there and the internet rules never fire; `--netq-dns-name=` does the same for `dns-failing`.
 
 To use your own rules, point `--alerts-file` (or `PISENS_ALERTS_FILE`) at a YAML file. Its rules replace the built-in ones completely, so copy any you want to keep:
 
@@ -378,6 +384,8 @@ pisens can push alerts to a webhook, to [ntfy](https://ntfy.sh) or to both when 
 - `--notify-ntfy` (or `PISENS_NOTIFY_NTFY`): a topic URL such as `https://ntfy.sh/my-pi-alerts`. The title reads `pi5: cpu-temp-high firing`, critical alerts are sent with urgent priority, warnings with high priority and resolves with the default one. For a protected topic put the credentials in the URL: `https://user:pass@ntfy.example.com/topic`.
 
 To keep a flapping alert from flooding your phone, each alert sends at most one firing notification per `--notify-cooldown` (default `15m`, `0` turns it off). A firing held back by the cooldown is sent when the cooldown ends if the alert is still firing, and a resolve is only sent for an alert whose firing was sent. Failed deliveries are retried up to five times with growing pauses; client errors such as `404` are not retried. Notifications are sent in the background, so a slow or unreachable endpoint never holds up the alerts or the dashboard.
+
+An `internet-down` notification usually cannot get out, since a webhook or ntfy on the internet is just as unreachable as the ping targets. The retries above give up after about half a minute and the firing is dropped; there is no queue that waits for the connection to come back. What does arrive is the `resolved` notification, sent once the internet is back, so you learn about the outage afterwards. The dashboard shows the alert either way. A webhook on the local network gets the firing as usual.
 
 At startup pisens logs which notifiers are enabled, with only the scheme and host of each URL, since webhook URLs and ntfy topics often work as passwords. Try it with:
 

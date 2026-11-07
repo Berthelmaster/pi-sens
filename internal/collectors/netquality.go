@@ -380,6 +380,7 @@ func (n *netquality) round(ctx context.Context, fsys fs.FS, targets []netqTarget
 		}
 		r.series["netq."+t.key+".loss_pct"] = loss
 	}
+	netqInternetSeries(r.series, r.targets)
 	if dnsName != "" {
 		d := &netqDNSData{Name: dnsName, OK: lookup.Err == nil}
 		if last != nil && last.dns != nil {
@@ -398,10 +399,48 @@ func (n *netquality) round(ctx context.Context, fsys fs.FS, targets []netqTarget
 			d.Error = lookup.Err.Error()
 		}
 		r.series["netq."+netqDNSKey+".failures"] = float64(d.Failures)
+		r.series["netq."+netqDNSKey+".failing"] = netqBool(!d.OK)
 		r.dns = d
 	}
 	r.status = netqStatus(r.targets, r.dns)
 	n.latest.Store(r)
+}
+
+// netqInternetSeries adds the series that sum up the internet targets, for
+// alert rules, which only look at one series at a time:
+// netq.internet_loss_pct, the lowest loss of any internet target, so it is
+// 100 only when every one of them lost every ping, and
+// netq.internet_latency_ms, the average latency of the ones that answered.
+// Without internet targets neither is there, and the latency is left out
+// when none answered.
+func netqInternetSeries(series map[string]float64, targets []netqTargetData) {
+	internet, answered := 0, 0
+	minLoss, latencySum := 100.0, 0.0
+	for _, t := range targets {
+		if t.Kind != netqInternet {
+			continue
+		}
+		internet++
+		minLoss = min(minLoss, t.LossPct)
+		if t.LatencyMs != nil {
+			answered++
+			latencySum += *t.LatencyMs
+		}
+	}
+	if internet == 0 {
+		return
+	}
+	series["netq.internet_loss_pct"] = minLoss
+	if answered > 0 {
+		series["netq.internet_latency_ms"] = netqRound3(latencySum / float64(answered))
+	}
+}
+
+func netqBool(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // netqSummarise returns the average round trip time, the jitter and the
