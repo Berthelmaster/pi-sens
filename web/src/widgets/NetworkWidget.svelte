@@ -81,6 +81,18 @@
     return [t, v.map((b) => b * 8)]
   }
 
+  /**
+   * Whether the network collector counts traffic on this interface. Bridges
+   * and docker interfaces only come from netinfo, so they get no rate line.
+   */
+  function hasCounters(v: InterfaceView): boolean {
+    return (
+      v.seriesKey !== undefined ||
+      v.rxBits !== undefined ||
+      v.txBits !== undefined
+    )
+  }
+
   interface Chart {
     /** `[times, rx bits/s, tx bits/s]`. */
     data: uPlot.AlignedData
@@ -138,22 +150,25 @@
 
     <ul class="ifaces">
       {#each views as v (v.name)}
-        {@const chart = chartOf(v)}
+        {@const counted = hasCounters(v)}
+        {@const chart = counted ? chartOf(v) : undefined}
         <li class="iface" class:inactive={!v.active}>
           <div class="head">
             <span class="name mono">{v.name}</span>
             <span class="badge" data-state={v.state}>{stateLabel(v.state)}</span
             >
-            <span class="rates num">
-              <span title="Receive">
-                <span class="swatch" style:background={RX_COLOR}></span>↓
-                {formatBitsPerSecond(v.rxBits)}
+            {#if counted}
+              <span class="rates num">
+                <span title="Receive">
+                  <span class="swatch" style:background={RX_COLOR}></span>↓
+                  {formatBitsPerSecond(v.rxBits)}
+                </span>
+                <span title="Transmit">
+                  <span class="swatch" style:background={TX_COLOR}></span>↑
+                  {formatBitsPerSecond(v.txBits)}
+                </span>
               </span>
-              <span title="Transmit">
-                <span class="swatch" style:background={TX_COLOR}></span>↑
-                {formatBitsPerSecond(v.txBits)}
-              </span>
-            </span>
+            {/if}
           </div>
 
           {#if chart && v.active}
