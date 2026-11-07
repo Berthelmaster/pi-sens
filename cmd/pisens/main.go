@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/Berthelmaster/pi-sens/internal/alerts"
+	"github.com/Berthelmaster/pi-sens/internal/auth"
 	"github.com/Berthelmaster/pi-sens/internal/collectors" // also registers the collectors
 	"github.com/Berthelmaster/pi-sens/internal/config"
 	"github.com/Berthelmaster/pi-sens/internal/history"
@@ -26,6 +27,9 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "hash-password" {
+		os.Exit(runHashPassword(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	os.Exit(run(os.Args[1:], os.Getenv, os.Stderr))
 }
 
@@ -77,6 +81,19 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	logger.Info("alert rules loaded", "rules", len(rules), "from", rulesFrom)
 
 	collectors.SetWatchServices(cfg.WatchServices)
+
+	var serverOpts []server.Option
+	if cfg.AuthEnabled() {
+		basic, err := auth.NewBasic(cfg.AuthUser, cfg.AuthPasswordHash, logger)
+		if err != nil { // config.Load already checked this
+			fmt.Fprintln(stderr, "pisens:", err)
+			return 2
+		}
+		serverOpts = append(serverOpts, server.WithBasicAuth(basic))
+		logger.Info("basic auth enabled", "user", cfg.AuthUser)
+	} else {
+		logger.Info("basic auth disabled; the dashboard is open to anyone who can reach it")
+	}
 
 	store, err := history.Open(ctx, cfg.DataDir)
 	if err != nil {
@@ -144,7 +161,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	samplerDone := make(chan error, 1)
 	go func() { samplerDone <- sampler.Run(ctx) }()
 
-	srv := server.New(cfg.Listen, version, web.Dist(), logger, sampler, evaluator, store)
+	srv := server.New(cfg.Listen, version, web.Dist(), logger, sampler, evaluator, store, serverOpts...)
 	err = srv.Run(ctx)
 	stop() // stop the sampler too if the server failed on its own
 	if serr := <-samplerDone; serr != nil {
