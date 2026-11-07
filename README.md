@@ -77,6 +77,8 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--watch-services`        | `PISENS_WATCH_SERVICES`        | (none)            | Comma separated systemd services to report the state of, e.g. `ssh,pisens` |
 | `--process-cmdline`       | `PISENS_PROCESS_CMDLINE`       | `redacted`        | How much of the top processes' command lines to show: `off`, `redacted` or `full`, see [Process command lines](#process-command-lines) |
 | `--net-skip`              | `PISENS_NET_SKIP`              | `lo,veth*,docker*,br-*` | Comma separated network interfaces to leave out, as names or prefixes ending in `*`, e.g. add `cni*,virbr*,tailscale0`; `--net-skip=` reports every interface |
+| `--energy-price`          | `PISENS_ENERGY_PRICE`          | (none)            | Electricity price per kWh; adds the cost to the [energy](#energy) section |
+| `--energy-currency`       | `PISENS_ENERGY_CURRENCY`       | (none)            | Currency shown with the energy cost, e.g. `DKK` |
 | `--prometheus`            | `PISENS_PROMETHEUS`            | `true`            | Serve [Prometheus metrics](#prometheus) at `/metrics`; `--prometheus=false` turns it off |
 | `--auth-user`             | `PISENS_AUTH_USER`             | (none)            | User name for HTTP basic auth, see [Authentication](#authentication) |
 | `--auth-password-hash`    | `PISENS_AUTH_PASSWORD_HASH`    | (none)            | bcrypt hash of the basic auth password, from `pisens hash-password` |
@@ -90,6 +92,23 @@ The `processes` section lists the full command line of each top process, and com
 - `redacted` (the default) replaces the values of arguments that commonly hold secrets with `***`: the argument after `--password`, `--token`, `--api-key` or `--secret` (also with one dash, `_` instead of `-` or a prefix such as `--db-password`), `-p<password>` as mysql takes it, any `key=value` whose key contains `pass`, `token`, `secret` or `key` (`--password=<value>`, `PGPASSWORD=<value>`, `?apikey=<value>`), and the password in a URL (`postgres://user:***@db/shop`). It catches the common forms, not every secret: a password passed as a bare argument is still shown.
 - `off` shows only the process name; the command line is not read at all.
 - `full` shows the command line unchanged.
+
+### Energy
+
+On a Pi 5 the `energy` section adds up how much energy the Pi uses, from the PMIC total power that the `power` section reports (`pi.power_w`). Every reading is integrated over the real time since the previous one (the trapezoid rule). If more than 2 minutes (or three sample intervals, if that is longer) pass between two readings, because pisens was stopped or the PMIC did not answer, that stretch adds nothing rather than a guess. Days and months start at local midnight.
+
+```json
+"energy": {
+  "available": true, "power_w": 3.21,
+  "today_kwh": 0.0412, "yesterday_kwh": 0.0771, "month_kwh": 0.5208, "total_kwh": 3.1904,
+  "since": "2026-09-14T08:02:11Z",
+  "today_cost": 0.1009, "month_cost": 1.276, "currency": "DKK"
+}
+```
+
+`since` is the first reading ever. The cost fields only appear when `--energy-price` (or `PISENS_ENERGY_PRICE`) is set, as the price per kWh; `--energy-currency` is shown next to it. The series `energy.today_kwh` and `energy.month_kwh` go to the history like any other. The totals are kept in `<data-dir>/energy.json`, written at most once a minute and on shutdown, so they survive restarts and deploys; a restart within 2 minutes even counts the time pisens was down. On a Pi without PMIC readings (a Pi 4 or older, or not a Pi) the section is `{"available": false}`.
+
+The PMIC sees what it supplies to the board (SoC, RAM, wireless, HDMI and so on), not USB devices or its own losses, so the totals are an estimate that stays below what a meter at the wall would show.
 
 ### History
 

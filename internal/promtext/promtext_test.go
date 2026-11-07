@@ -64,6 +64,9 @@ func TestLookup(t *testing.T) {
 		{"pi.throttled", "pisens_throttled", nil},
 		{"pi.undervoltage", "pisens_undervoltage", nil},
 
+		{"energy.today_kwh", "pisens_energy_today_kilowatt_hours", nil},
+		{"energy.month_kwh", "pisens_energy_month_kilowatt_hours", nil},
+
 		{"services.failed", "pisens_services_failed", nil},
 		{"system.uptime_s", "pisens_uptime_seconds", nil},
 		{"system.procs", "pisens_processes", nil},

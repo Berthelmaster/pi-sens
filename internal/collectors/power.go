@@ -24,6 +24,9 @@ func init() { metrics.Register(&power{}) }
 // The vcgencmd calls are run concurrently, so a sample takes about as long as
 // the slowest one rather than the sum of all of them.
 //
+// Each PMIC total is also handed to the energy meter (see SetEnergy), which
+// adds up the kWh the energy collector reports.
+//
 // Without a usable vcgencmd the section is {"available": false} with no
 // series. On a Pi without pmic_read_adc (anything before the Pi 5) the pmic
 // part is left out.
@@ -167,6 +170,7 @@ func (p *power) Collect(ctx context.Context, env *metrics.Env) (metrics.Result, 
 			}
 			data.PMIC = d
 			series["pi.power_w"] = d.TotalW
+			energyAdd(env.Now, d.TotalW)
 			if d.Ext5VV != nil {
 				series["pi.ext5v_v"] = *d.Ext5VV
 			}
