@@ -6,6 +6,7 @@
   import Gauge, { gaugeStatus } from '../components/Gauge.svelte'
   import Sparkline from '../components/Sparkline.svelte'
   import TimeSeriesChart from '../components/TimeSeriesChart.svelte'
+  import { seriesColor } from '../lib/chart'
 
   const STEP = 5 // seconds between samples
   const POINTS = 720 // one hour
@@ -55,6 +56,15 @@
     cpu.slice(-60),
   ])
   let latest = $derived(cpu[cpu.length - 1])
+  // Two lines on one sparkline, like rx/tx on the network card. The second
+  // line has a gap to show a sample only one series has.
+  let spark2 = $derived<uPlot.AlignedData>([
+    spark[0],
+    spark[1],
+    (cores[2] as number[])
+      .slice(-60)
+      .map((v, i) => (i > 20 && i < 26 ? null : v)),
+  ])
 
   let gaugeValue = $state(82)
 
@@ -117,6 +127,13 @@
         color="var(--chart-2)"
         height={24}
         label="Same data, auto scale, smaller"
+      />
+      <Sparkline
+        data={spark2}
+        min={0}
+        max={100}
+        colors={[seriesColor(0), seriesColor(1)]}
+        label="Core 0 and core 1 usage, last 5 minutes"
       />
     </Card>
 

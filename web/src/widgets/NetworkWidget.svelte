@@ -1,7 +1,9 @@
 <script lang="ts">
   import { derived } from 'svelte/store'
+  import type uPlot from 'uplot'
   import Card from '../components/Card.svelte'
   import Sparkline from '../components/Sparkline.svelte'
+  import { alignHistories, seriesColor } from '../lib/chart'
   import {
     formatBitsPerSecond,
     formatBytes,
@@ -27,8 +29,8 @@
   } from '../types/network'
   import { isCollectorError } from '../types/snapshot'
 
-  const RX_COLOR = 'var(--chart-1)'
-  const TX_COLOR = 'var(--chart-2)'
+  const RX_COLOR = seriesColor(0)
+  const TX_COLOR = seriesColor(1)
 
   let networkRaw = $derived(networkSection($snapshot))
   let netinfoRaw = $derived(netinfoSection($snapshot))
@@ -75,17 +77,17 @@
   })
 
   /** Bytes per second history as bits per second, for the sparkline. */
-  function toBits([t, v]: SeriesHistory): [number[], number[]] {
+  function toBits([t, v]: SeriesHistory): SeriesHistory {
     return [t, v.map((b) => b * 8)]
   }
 
   interface Chart {
-    rx: [number[], number[]]
-    tx: [number[], number[]]
+    /** `[times, rx bits/s, tx bits/s]`. */
+    data: uPlot.AlignedData
     max: number
   }
 
-  /** The rx and tx sparklines of an interface on a shared scale. */
+  /** The rx and tx lines of an interface for one sparkline. */
   function chartOf(v: InterfaceView): Chart | undefined {
     const h = v.seriesKey ? histories[v.seriesKey] : undefined
     if (!h || (h.rx[0].length < 2 && h.tx[0].length < 2)) return undefined
@@ -96,7 +98,10 @@
     for (const b of tx[1]) peak = Math.max(peak, b)
     // At least 8 kb/s so an idle link stays a flat line at the bottom
     // instead of blowing up background chatter.
-    return { rx, tx, max: niceCeil(Math.max(peak, 8000)) }
+    return {
+      data: alignHistories(rx, tx),
+      max: niceCeil(Math.max(peak, 8000)),
+    }
   }
 
   let bothFailed = $derived(!!networkError && !!netinfoError)
@@ -154,23 +159,13 @@
           {#if chart && v.active}
             <div class="spark">
               <Sparkline
-                data={chart.rx}
+                data={chart.data}
                 min={0}
                 max={chart.max}
-                color={RX_COLOR}
+                colors={[RX_COLOR, TX_COLOR]}
                 height={32}
-                label="{v.name} receive rate, last 5 minutes"
+                label="{v.name} receive and transmit rate, last 5 minutes"
               />
-              <div class="overlay">
-                <Sparkline
-                  data={chart.tx}
-                  min={0}
-                  max={chart.max}
-                  color={TX_COLOR}
-                  height={32}
-                  label="{v.name} transmit rate, last 5 minutes"
-                />
-              </div>
               <span class="scale num" aria-hidden="true">
                 {formatBitsPerSecond(chart.max, 0)}
               </span>
@@ -347,12 +342,6 @@
   .spark {
     position: relative;
     margin-bottom: var(--space-2);
-  }
-
-  .overlay {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
   }
 
   .scale {

@@ -7,6 +7,7 @@
 // element, so the charts can keep using the tokens from theme.css.
 
 import uPlot from 'uplot'
+import type { SeriesHistory } from './live'
 
 /** Number of series colours in theme.css (--chart-1 to --chart-8). */
 export const SERIES_COLORS = 8
@@ -79,4 +80,25 @@ export function withAlpha(color: string, alpha: number): string {
   const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(color)
   if (!m) return color
   return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha})`
+}
+
+/**
+ * Several `[times, values]` histories as one uPlot data table, for a chart
+ * with a line per history. The x values are every time any history has,
+ * oldest first; a history without a sample at one of them gets a null there,
+ * which uPlot draws as a gap.
+ */
+export function alignHistories(
+  ...histories: SeriesHistory[]
+): uPlot.AlignedData {
+  const times = [...new Set(histories.flatMap(([t]) => t))].sort(
+    (a, b) => a - b,
+  )
+  const index = new Map(times.map((t, i) => [t, i]))
+  const columns = histories.map(([t, v]) => {
+    const col: (number | null)[] = new Array(times.length).fill(null)
+    t.forEach((time, i) => (col[index.get(time) as number] = v[i]))
+    return col
+  })
+  return [times, ...columns]
 }

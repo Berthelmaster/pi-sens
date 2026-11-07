@@ -1,10 +1,12 @@
 <script lang="ts">
   import { derived } from 'svelte/store'
+  import type uPlot from 'uplot'
   import Card from '../components/Card.svelte'
   import Gauge from '../components/Gauge.svelte'
   import Sparkline from '../components/Sparkline.svelte'
+  import { alignHistories, seriesColor } from '../lib/chart'
   import { formatBytes, formatPercent, PLACEHOLDER } from '../lib/format'
-  import { seriesHistory, snapshot, type SeriesHistory } from '../lib/live'
+  import { seriesHistory, snapshot } from '../lib/live'
   import { isCollectorError } from '../types/snapshot'
   import {
     diskioSection,
@@ -21,7 +23,6 @@
     isNumber,
     moreLabel,
     storageStatus,
-    sumHistories,
     VISIBLE_MOUNTS,
   } from './storage'
 
@@ -51,23 +52,26 @@
   )
   let hiddenMounts = $derived(mounts.slice(VISIBLE_MOUNTS))
 
-  // Combined read + write throughput per disk for the sparklines. The series
-  // keys depend on which disks there are, so the subscriptions are redone
-  // when that list changes, not on every snapshot.
+  const READ_COLOR = seriesColor(0)
+  const WRITE_COLOR = seriesColor(1)
+
+  // Read and write throughput per disk as `[times, read, write]` for the
+  // sparklines. The series keys depend on which disks there are, so the
+  // subscriptions are redone when that list changes, not on every snapshot.
   let diskNames = $derived(disks.map((d) => d.name).join('\n'))
-  let throughput = $state.raw<Record<string, SeriesHistory>>({})
+  let throughput = $state.raw<Record<string, uPlot.AlignedData>>({})
   $effect(() => {
     const names = diskNames === '' ? [] : diskNames.split('\n')
     // Collected here rather than spread from throughput, which would make
     // the effect depend on what it writes.
-    const latest: Record<string, SeriesHistory> = {}
+    const latest: Record<string, uPlot.AlignedData> = {}
     const unsubscribe = names.map((name) =>
       derived(
         [
           seriesHistory(diskSeriesKey(name, 'read_bps')),
           seriesHistory(diskSeriesKey(name, 'write_bps')),
         ],
-        ([read, write]) => sumHistories(read, write),
+        ([read, write]) => alignHistories(read, write),
       ).subscribe((h) => {
         latest[name] = h
         throughput = { ...latest }
@@ -79,7 +83,7 @@
     }
   })
 
-  const noHistory: SeriesHistory = [[], []]
+  const noHistory: uPlot.AlignedData = [[], [], []]
 </script>
 
 <Card title="Storage" {status}>
@@ -154,11 +158,17 @@
               </div>
               <dl class="rates">
                 <div>
-                  <dt>Read</dt>
+                  <dt>
+                    <span class="swatch" style:background={READ_COLOR}></span>
+                    Read
+                  </dt>
                   <dd class="num">{formatRate(d.rates?.read_bps)}</dd>
                 </div>
                 <div>
-                  <dt>Write</dt>
+                  <dt>
+                    <span class="swatch" style:background={WRITE_COLOR}></span>
+                    Write
+                  </dt>
                   <dd class="num">{formatRate(d.rates?.write_bps)}</dd>
                 </div>
                 <div>
@@ -177,6 +187,7 @@
               <Sparkline
                 data={throughput[d.name] ?? noHistory}
                 min={0}
+                colors={[READ_COLOR, WRITE_COLOR]}
                 height={32}
                 label="{d.name} read and write throughput, last 5 minutes"
               />
@@ -275,6 +286,14 @@
     margin: 0;
     font-size: 0.875rem;
     white-space: nowrap;
+  }
+
+  .swatch {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 2px;
+    vertical-align: middle;
   }
 
   .mono {
