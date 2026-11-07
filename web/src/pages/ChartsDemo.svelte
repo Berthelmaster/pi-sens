@@ -106,6 +106,15 @@
     ...coreOrder.map((i) => cores[i + 1]),
   ])
 
+  // Two charts with linked crosshairs. The bottom one covers only the last
+  // half hour: the crosshairs line up by time, not by position, and hovering
+  // the first half of the top chart shows nothing below.
+  const LINKED_KEY = 'charts-demo'
+  let linkedTemps = $derived<uPlot.AlignedData>([
+    cores[0].slice(-POINTS / 2),
+    temps.slice(-POINTS / 2),
+  ])
+
   // Unmounting and remounting the charts is a quick leak check: watch the
   // canvas count in devtools stay flat.
   let mounted = $state(true)
@@ -206,6 +215,31 @@
         />
       </Card>
     </div>
+
+    <div class="wide">
+      <Card title="Linked crosshairs">
+        <div class="linked">
+          <TimeSeriesChart
+            data={coreData}
+            series={coreSeries}
+            format={pct}
+            min={0}
+            max={100}
+            height={180}
+            label="CPU usage per core, last hour"
+            syncKey={LINKED_KEY}
+          />
+          <TimeSeriesChart
+            data={linkedTemps}
+            series={[{ label: 'CPU' }]}
+            format={celsius}
+            height={140}
+            label="CPU temperature, last 30 minutes"
+            syncKey={LINKED_KEY}
+          />
+        </div>
+      </Card>
+    </div>
   </div>
 {/if}
 
@@ -239,6 +273,12 @@
     .wide {
       grid-column: 1 / -1;
     }
+  }
+
+  .linked {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
   }
 
   .stat {

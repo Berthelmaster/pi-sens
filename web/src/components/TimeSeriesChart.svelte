@@ -72,6 +72,12 @@
      * axis follows the data.
      */
     xRange?: [number, number]
+    /**
+     * Charts with the same key share a crosshair: hovering one moves the
+     * cursor and tooltip on the others to the same time. Left out, the
+     * chart is on its own.
+     */
+    syncKey?: string
   }
 
   let {
@@ -85,6 +91,7 @@
     label,
     bands,
     xRange,
+    syncKey,
   }: Props = $props()
 
   function defaultFormat(value: number): string {
@@ -155,6 +162,7 @@
     void theme.current
     void seriesShape
     const mask = bandMask
+    const key = syncKey
     const axisColor = resolveColor(el, 'var(--chart-axis)')
     const gridColor = resolveColor(el, 'var(--chart-grid)')
     const font = canvasFont(el, 12)
@@ -216,6 +224,9 @@
         y: false,
         drag: { x: false, y: false, setScale: false },
         points: { size: 8, width: 2 },
+        // Linked charts match by time only. Their y scales differ, so the
+        // height is passed on as a share of the plot instead.
+        sync: key === undefined ? undefined : { key, scales: ['x', null] },
       },
       select: { show: false, left: 0, top: 0, width: 0, height: 0 },
       legend: { show: false },
@@ -247,11 +258,18 @@
         setCursor: [
           (u) => {
             const { idx, left, top } = u.cursor
-            if (idx == null || left == null || top == null || left < 0) {
+            const plotWidth = u.over.clientWidth
+            // A linked chart can point at a time outside this one's range.
+            if (
+              idx == null ||
+              left == null ||
+              top == null ||
+              left < 0 ||
+              left > plotWidth
+            ) {
               hover = null
               return
             }
-            const plotWidth = u.over.clientWidth
             hover = {
               idx,
               left: u.over.offsetLeft + left,

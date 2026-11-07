@@ -57,6 +57,10 @@
     }
   }
 
+  // Every chart on the page shares one crosshair, to compare series at the
+  // same moment.
+  const SYNC_KEY = 'history'
+
   const main = new HistoryQuery()
   const customQuery = new HistoryQuery()
 
@@ -304,6 +308,7 @@
               max={panel.max}
               height={group.panels.length > 1 ? 160 : 220}
               label="{panel.title}, {rangeLabel}"
+              syncKey={SYNC_KEY}
             />
           </div>
         {/each}
@@ -363,6 +368,7 @@
             unit={customUnit}
             height={260}
             label="Custom chart, {rangeLabel}"
+            syncKey={SYNC_KEY}
           />
         {:else}
           <p class="muted note">
