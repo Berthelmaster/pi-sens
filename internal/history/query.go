@@ -4,7 +4,9 @@ package history
 //
 // A query reads one table, picked by the length of the range: raw samples up
 // to RawUpTo, 1 minute rollups up to MinuteUpTo and 15 minute rollups beyond
-// that. SQL then groups the rows into buckets of Step seconds, a multiple of
+// that. If the range starts before the retention of that table (see
+// Store.SetRetention), the rows it needs are gone, so the query steps up to
+// the next coarser table that still has them. SQL then groups the rows into buckets of Step seconds, a multiple of
 // the table's own resolution, so a series never has more than Points points.
 // Buckets start at multiples of Step since the Unix epoch, so the same range
 // queried again a little later gives the same buckets and a chart that
@@ -92,16 +94,24 @@ func rollupQuery(table string) string {
 
 // plan picks the table for [from, to) and the smallest bucket size that
 // keeps the number of epoch-aligned buckets within points. It needs
-// from < to and points >= 2.
-func plan(from, to int64, points int) (source, int64) {
+// from < to and points >= 2. A table whose retention ret has already
+// expired from at time now is skipped for the next coarser one. The 15
+// minute table is the last, so a range older than its retention still
+// reads it.
+func plan(from, to int64, points int, now int64, ret Retention) (source, int64) {
 	span := to - from
-	src := quarterSource
+	i := 2
 	switch {
 	case span <= seconds(RawUpTo):
-		src = rawSource
+		i = 0
 	case span <= seconds(MinuteUpTo):
-		src = minuteSource
+		i = 1
 	}
+	keep := []time.Duration{ret.Raw, ret.Minute}
+	for i < len(keep) && keep[i] > 0 && from < now-seconds(keep[i]) {
+		i++
+	}
+	src := []source{rawSource, minuteSource, quarterSource}[i]
 	// ceil(span/step) buckets fit when aligned to from; aligned to the epoch
 	// the range can straddle one more.
 	n := int64(points)
@@ -130,7 +140,7 @@ func (s *Store) Query(ctx context.Context, q Query) (Result, error) {
 	if q.Points < 2 {
 		return Result{}, errors.New("history: query needs at least 2 points")
 	}
-	src, step := plan(from, to, q.Points)
+	src, step := plan(from, to, q.Points, s.now().Unix(), s.retention)
 	res := Result{Resolution: src.resolution, Step: step, Series: make(map[string]*Series, len(q.Keys))}
 	for _, key := range q.Keys {
 		if _, ok := res.Series[key]; ok {

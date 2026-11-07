@@ -28,7 +28,7 @@ func TestPlanPicksTableByRange(t *testing.T) {
 		{30 * 24 * time.Hour, 100_000, ResolutionQuarter, 900},
 	}
 	for _, tt := range tests {
-		src, step := plan(from, from+seconds(tt.span), tt.points)
+		src, step := plan(from, from+seconds(tt.span), tt.points, from+seconds(tt.span), Retention{})
 		if src.resolution != tt.want || step != tt.wantStep {
 			t.Errorf("plan(%v, %d points) = %s, step %d; want %s, step %d",
 				tt.span, tt.points, src.resolution, step, tt.want, tt.wantStep)
@@ -43,7 +43,7 @@ func TestPlanNeverExceedsPoints(t *testing.T) {
 		for _, span := range spans {
 			for _, off := range offsets {
 				from := q0.Unix() + off
-				src, step := plan(from, from+span, points)
+				src, step := plan(from, from+span, points, from+span, longRetention)
 				if step%src.bucket != 0 {
 					t.Errorf("plan(+%d, %ds, %d) step %d is not a multiple of %d", off, span, points, step, src.bucket)
 				}
@@ -51,6 +51,39 @@ func TestPlanNeverExceedsPoints(t *testing.T) {
 					t.Errorf("plan(+%d, %ds, %d) step %d gives %d buckets", off, span, points, step, n)
 				}
 			}
+		}
+	}
+}
+
+func TestPlanStepsUpPastRetention(t *testing.T) {
+	now := q0.Unix()
+	short := Retention{Raw: time.Hour, Minute: 2 * time.Hour, Quarter: 24 * time.Hour}
+	tests := []struct {
+		name     string
+		ret      Retention
+		from, to time.Duration // before now
+		want     Resolution
+	}{
+		{"recent 6h reads raw", longRetention, 6 * time.Hour, 0, ResolutionRaw},
+		{"raw kept exactly to from", longRetention, 24 * time.Hour, 23 * time.Hour, ResolutionRaw},
+		{"6h three days ago", longRetention, 3 * 24 * time.Hour, 3*24*time.Hour - 6*time.Hour, ResolutionMinute},
+		{"1h two days ago", longRetention, 2 * 24 * time.Hour, 47 * time.Hour, ResolutionMinute},
+		{"3 days a month ago", longRetention, 30 * 24 * time.Hour, 27 * 24 * time.Hour, ResolutionQuarter},
+		{"recent 3 days reads 1m", longRetention, 3 * 24 * time.Hour, 0, ResolutionMinute},
+		{"older than every retention", longRetention, 200 * 24 * time.Hour, 199 * 24 * time.Hour, ResolutionQuarter},
+		{"unknown retention", Retention{}, 30 * 24 * time.Hour, 30*24*time.Hour - time.Hour, ResolutionRaw},
+		{"short raw, last 30m", short, 30 * time.Minute, 0, ResolutionRaw},
+		{"short raw, last 3h", short, 3 * time.Hour, 0, ResolutionQuarter},
+		{"short raw, 90m ago", short, 90 * time.Minute, time.Hour, ResolutionMinute},
+		{"short 1m, last 2 days", short, 2 * 24 * time.Hour, 0, ResolutionQuarter},
+	}
+	for _, tt := range tests {
+		src, step := plan(now-seconds(tt.from), now-seconds(tt.to), 500, now, tt.ret)
+		if src.resolution != tt.want {
+			t.Errorf("%s: plan() = %s, want %s", tt.name, src.resolution, tt.want)
+		}
+		if step%src.bucket != 0 {
+			t.Errorf("%s: step %d is not a multiple of %d", tt.name, step, src.bucket)
 		}
 	}
 }
@@ -128,6 +161,78 @@ func TestQueryReadsRollups(t *testing.T) {
 	if a.T[2] != q0.Unix()+1800 || a.Min[0] != 0 || a.Max[0] != 6 {
 		t.Errorf("points = %+v", a)
 	}
+}
+
+// checkQuery runs a query of "a" over [from, to) after q0 and checks the
+// table it read and the number of points.
+func checkQuery(t *testing.T, s *Store, from, to time.Duration, want Resolution, wantPoints int) *Series {
+	t.Helper()
+	res, err := s.Query(context.Background(), Query{
+		Keys: []string{"a"}, From: q0.Add(from), To: q0.Add(to), Points: 10_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := res.Series["a"]
+	if res.Resolution != want || len(a.T) != wantPoints {
+		t.Fatalf("Query(+%v, +%v) = %s, %d points; want %s, %d points", from, to, res.Resolution, len(a.T), want, wantPoints)
+	}
+	return a
+}
+
+func TestQueryReadsRollupsPastRetention(t *testing.T) {
+	s := seedQuery(t)
+	clock := &fakeClock{now: q0.Add(3 * 24 * time.Hour)}
+	s.SetRetention(longRetention)
+	s.now = clock.Now
+	d := newTestDownsampler(t, s, clock, longRetention, 0)
+
+	// Three days on, the raw samples have expired, so an hour of them is
+	// read from the minute rollups.
+	runOnce(t, d)
+	if n := countRows(t, s, "samples_raw"); n != 0 {
+		t.Fatalf("samples_raw has %d rows after retention, want 0", n)
+	}
+	a := checkQuery(t, s, 0, time.Hour, ResolutionMinute, 40)
+	if a.Avg[0] != 2.5 || a.Min[1] != 0 || a.Max[1] != 6 {
+		t.Errorf("first points = avg %v min %v max %v", a.Avg[:2], a.Min[:2], a.Max[:2])
+	}
+
+	// A month on, the minute rollups have expired too, so 3 days read the
+	// quarter rollups.
+	clock.now = q0.Add(30 * 24 * time.Hour)
+	runOnce(t, d)
+	a = checkQuery(t, s, 0, 3*24*time.Hour, ResolutionQuarter, 3)
+	if a.Min[0] != 0 || a.Max[0] != 6 {
+		t.Errorf("points = %+v", a)
+	}
+}
+
+func TestQueryShortRetention(t *testing.T) {
+	s := seedQuery(t)
+	ret := Retention{Raw: time.Hour, Minute: 2 * time.Hour, Quarter: 24 * time.Hour}
+	clock := &fakeClock{now: q0.Add(2 * time.Hour)}
+	s.SetRetention(ret)
+	s.now = clock.Now
+	d := newTestDownsampler(t, s, clock, ret, 0)
+
+	// The last 2h are under RawUpTo, but raw samples are only kept for 1h.
+	runOnce(t, d)
+	checkQuery(t, s, 0, 2*time.Hour, ResolutionMinute, 40)
+
+	// The last 5h are past the 2h of minute rollups as well.
+	clock.now = q0.Add(5 * time.Hour)
+	runOnce(t, d)
+	checkQuery(t, s, 0, 5*time.Hour, ResolutionQuarter, 3)
+}
+
+func countRows(t *testing.T, s *Store, table string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func TestQueryRejectsBadInput(t *testing.T) {

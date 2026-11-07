@@ -101,6 +101,12 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		return 1
 	}
 	logger.Info("history database opened", "path", store.Path())
+	retention := history.Retention{
+		Raw:     cfg.HistoryRawRetention,
+		Minute:  cfg.History1mRetention,
+		Quarter: cfg.History15mRetention,
+	}
+	store.SetRetention(retention)
 
 	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
 
@@ -116,13 +122,9 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	// A sample reaches the database within about a history interval plus a
 	// sample interval of its timestamp; the second sample interval is slack.
 	downsampler := history.NewDownsampler(store, history.DownsamplerOptions{
-		Retention: history.Retention{
-			Raw:     cfg.HistoryRawRetention,
-			Minute:  cfg.History1mRetention,
-			Quarter: cfg.History15mRetention,
-		},
-		Delay:  cfg.HistoryInterval + 2*cfg.Interval,
-		Logger: logger,
+		Retention: retention,
+		Delay:     cfg.HistoryInterval + 2*cfg.Interval,
+		Logger:    logger,
 	})
 	downsamplerDone := make(chan struct{})
 	go func() {
