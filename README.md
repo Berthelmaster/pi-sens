@@ -43,6 +43,7 @@ Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT o
 |--------|----------------|---------------------------------------|
 | GET    | `/api/health`  | `{"status":"ok","version":"<version>"}` |
 | GET    | `/api/metrics` | Latest metrics snapshot (503 until the first sample) |
+| GET    | `/api/stream`  | Server-Sent Events: the latest snapshot on connect, then one per sample |
 
 A snapshot looks like this. Each collector has its own section; a collector that fails shows `{"error": "..."}` instead and the others are unaffected. Series keys are `area.thing_unit`.
 
@@ -52,6 +53,12 @@ A snapshot looks like this. Each collector has its own section; a collector that
   "collectors": { "uptime": { "seconds": 334893.67, "boot_time": "2026-11-03T12:19:48Z" } },
   "series": { "system.uptime_s": 334893.67 }
 }
+```
+
+`/api/stream` sends each snapshot as an `event: snapshot` message with the snapshot JSON as `data`, plus a `: heartbeat` comment every 15 seconds so proxies keep the connection open. Watch it with:
+
+```sh
+curl -N localhost:8080/api/stream
 ```
 
 ### Adding a collector

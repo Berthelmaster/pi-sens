@@ -8,18 +8,71 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
+// fakeSource serves a fixed latest snapshot. Snapshots passed to publish go
+// to every subscriber.
 type fakeSource struct {
 	snap metrics.Snapshot
 	ok   bool
+
+	mu   sync.Mutex
+	subs map[chan metrics.Snapshot]struct{}
+	// subscribed receives a value on every Subscribe call when non-nil.
+	subscribed chan struct{}
 }
 
 func (f *fakeSource) Latest() (metrics.Snapshot, bool) { return f.snap, f.ok }
+
+func (f *fakeSource) Subscribe() (<-chan metrics.Snapshot, func()) {
+	ch := make(chan metrics.Snapshot, metrics.SubscriberBuffer)
+	f.mu.Lock()
+	if f.subs == nil {
+		f.subs = map[chan metrics.Snapshot]struct{}{}
+	}
+	f.subs[ch] = struct{}{}
+	f.mu.Unlock()
+	if f.subscribed != nil {
+		f.subscribed <- struct{}{}
+	}
+	return ch, func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.subs[ch]; ok {
+			delete(f.subs, ch)
+			close(ch)
+		}
+	}
+}
+
+func (f *fakeSource) publish(snap metrics.Snapshot) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for ch := range f.subs {
+		ch <- snap
+	}
+}
+
+// stop closes every subscriber channel, like the sampler does when it stops.
+func (f *fakeSource) stop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for ch := range f.subs {
+		delete(f.subs, ch)
+		close(ch)
+	}
+}
+
+func (f *fakeSource) subscribers() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.subs)
+}
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
