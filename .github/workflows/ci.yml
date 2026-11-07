@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to the same branch or PR replaces the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+      # The arm64 build embeds this, so the binary ships the real dashboard.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          # There is no go.sum until the module gets its first dependency.
+          cache-dependency-path: |
+            go.mod
+            go.sum
+
+      - run: go vet ./...
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+
+      - run: go test -race ./...
+
+  build-arm64:
+    name: Build linux/arm64
+    needs: [web, go]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and tags so git describe gives a real version.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.mod
+            go.sum
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist/
+
+      - name: Build
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: |
+          test -f web/dist/index.html
+          version=$(git describe --tags --always --dirty)
+          go build -trimpath -ldflags "-s -w -X main.version=${version}" -o bin/pisens-linux-arm64 ./cmd/pisens
+          file bin/pisens-linux-arm64
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pisens-linux-arm64
+          path: bin/pisens-linux-arm64
+          if-no-files-found: error

@@ -12,6 +12,7 @@ make build-arm64    # frontend + static linux/arm64 binary for the Pi in bin/pis
 make web            # only build the frontend into web/dist (npm ci + npm run build)
 make web-check      # svelte-check, tsc and prettier --check on the frontend
 make test           # go vet + go test
+make lint           # golangci-lint (v2, config in .golangci.yml)
 make run            # build and run; pass flags with ARGS='--listen :9090'
 ```
 
@@ -86,3 +87,13 @@ curl -N localhost:8080/api/stream
 ### Adding a collector
 
 Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions and `uptime.go` for a reference implementation.
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request to `main`:
+
+- Frontend: `npm ci`, `npm run check` and `npm run build` in `web/`
+- Go: `go vet`, `golangci-lint` and `go test -race ./...`
+- A static `linux/arm64` build with the frontend embedded, uploaded as the `pisens-linux-arm64` artifact on the run page
+
+To match the lint step locally, install the golangci-lint version pinned in the workflow and run `make lint`.
