@@ -130,6 +130,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	}
 	collectors.SetEnergy(meter, cfg.EnergyPrice, cfg.EnergyCurrency)
 	logger.Info("energy meter", "path", meter.Path(), "price", cfg.EnergyPrice, "currency", cfg.EnergyCurrency)
+	serverOpts = append(serverOpts, server.WithEnergyPrice(cfg.EnergyPrice, cfg.EnergyCurrency))
 
 	// The network quality probes run on their own interval, so a slow
 	// network never holds up a sample; the collector reports the latest round.

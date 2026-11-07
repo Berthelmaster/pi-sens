@@ -182,6 +182,7 @@ pisens does not run `PRAGMA incremental_vacuum`. With steady deletes and inserts
 | GET    | `/api/alerts`  | Firing alerts and the last 50 resolved ones |
 | GET    | `/api/series`  | Stored series keys, `?prefix=cpu.` for only some |
 | GET    | `/api/history` | History of up to 10 series, see [History API](#history-api) |
+| GET    | `/api/energy/daily` | Energy used per day, `?days=30` by default, see [History API](#history-api) |
 | GET    | `/metrics`     | Latest series in the Prometheus text format, see [Prometheus](#prometheus) (404 with `--prometheus=false`) |
 
 Any other `GET` path serves the web UI. Files in `web/dist` are served as they are, and paths without a file extension fall back to `index.html` so client-side routes like `/history` work as deep links. Hashed files under `/assets/` are cached for a year; everything else is sent with `Cache-Control: no-cache`. Every file carries a strong `ETag` (a hash of its contents), so browsers revalidate `index.html` with a cheap `304 Not Modified` until a new build changes it. Unknown `/api/...` paths return a JSON 404.
@@ -240,9 +241,27 @@ curl -N localhost:8080/api/stream
 - `avg` is the average over the bucket, weighted by sample count, and `min`/`max` are the extremes. For raw samples with a `step` of 1 they are all the sample value.
 - Bad input (no `series`, more than 10, `from` missing or not before `to`, `points` out of range) returns 400 with `{"error": "..."}`.
 
+`GET /api/energy/daily?days=30` returns the energy the Pi used on each of the last `days` local calendar days (1 to 366, default 30), today included and counting:
+
+```json
+{
+  "days": [
+    { "date": "2026-11-06", "start": 1762383600, "kwh": 0.1187, "cost": 0.2908 },
+    { "date": "2026-11-07", "start": 1762470000, "kwh": 0.0412, "cost": 0.1009 }
+  ],
+  "price": 2.45,
+  "currency": "DKK"
+}
+```
+
+- A day's `kwh` is the highest `energy.today_kwh` stored for it, which is where the counter stood when the day ended. `start` is the day's local midnight in unix seconds.
+- Every day in the range is listed, oldest first. A day with nothing stored (pisens was off, or the Pi has no PMIC readings) has `"kwh": null` and no cost.
+- `cost`, `price` and `currency` only appear when `--energy-price` is set.
+- It reads the 15 minute rollups where they are done and the finer tables for the newest minutes, so today's value is current. Days older than `PISENS_HISTORY_15M_RETENTION` (90 days by default) are null.
+
 On a Raspberry Pi 5 with the default retention for 50 series (a 91 MB database), a 30 day query for 10 series takes 60–110 ms, measured with curl against the running binary.
 
-The **History** page in the dashboard charts this API. Pick 1h, 6h, 24h, 7d, 30d or 90d, or a custom from/to; ranges up to 24h refresh every 30 seconds. The default charts (CPU, temperature and fan, memory, network, disk I/O, Pi power and voltage) only show the series this Pi has, and where a point stands for several samples a shaded band shows their min and max. The custom chart plots any stored series together, up to 8. The range and the custom series are kept in the URL, e.g. `/history?range=7d&series=cpu.usage_pct,temp.cpu_c` or `/history?from=1762473600&to=1762560000`, so a link shows the same charts.
+The **History** page in the dashboard charts this API. Pick 1h, 6h, 24h, 7d, 30d or 90d, or a custom from/to; ranges up to 24h refresh every 30 seconds. The default charts (CPU, temperature and fan, memory, network, disk I/O, Pi power and voltage) only show the series this Pi has, and where a point stands for several samples a shaded band shows their min and max. Below them, **Energy per day** shows the last 30 days as bars from `/api/energy/daily`, whatever range is picked; hovering a day shows its kWh and, with a price set, its cost, and today's bar is lighter while it still counts. The custom chart plots any stored series together, up to 8. The range and the custom series are kept in the URL, e.g. `/history?range=7d&series=cpu.usage_pct,temp.cpu_c` or `/history?from=1762473600&to=1762560000`, so a link shows the same charts.
 
 ### Alerts
 

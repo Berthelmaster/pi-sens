@@ -55,6 +55,7 @@ type AlertSource interface {
 type HistorySource interface {
 	SeriesKeys(ctx context.Context, prefix string) ([]string, error)
 	Query(ctx context.Context, q history.Query) (history.Result, error)
+	DailyMax(ctx context.Context, key string, from, to time.Time, loc *time.Location) ([]history.DayMax, error)
 }
 
 // Server serves the pisens HTTP API and the web UI.
@@ -68,8 +69,13 @@ type Server struct {
 	auth     *auth.Basic  // nil leaves every route open
 	snapshot SnapshotSource
 	alerts   AlertSource      // nil turns off /api/alerts and alert events
-	history  HistorySource    // nil turns off /api/series and /api/history
+	history  HistorySource    // nil turns off /api/series, /api/history and /api/energy/daily
 	now      func() time.Time // the default end of a history query; tests fix it
+	loc      *time.Location   // whose midnight starts a day in /api/energy/daily
+	// energyPrice per kWh, above zero, adds costs in energyCurrency to
+	// /api/energy/daily. WithEnergyPrice sets them.
+	energyPrice    float64
+	energyCurrency string
 	// prometheus turns on /metrics. EnablePrometheus sets it before serving.
 	prometheus bool
 
@@ -89,11 +95,19 @@ func WithBasicAuth(b *auth.Basic) Option {
 	return func(s *Server) { s.auth = b }
 }
 
+// WithEnergyPrice sets the electricity price per kWh, and the currency to
+// label it with, that /api/energy/daily prices each day's use at. A price of
+// zero or less leaves the costs out.
+func WithEnergyPrice(price float64, currency string) Option {
+	return func(s *Server) { s.energyPrice, s.energyCurrency = price, currency }
+}
+
 // New creates a server that listens on addr, reports version from the health
 // endpoint, serves metrics from snapshots and alerts from alertSource, and
 // serves the single-page app in ui at /. ui is normally web.Dist().
 // alertSource may be nil, which leaves out /api/alerts and the alert events.
-// historySource may be nil, which leaves out /api/series and /api/history.
+// historySource may be nil, which leaves out /api/series, /api/history and
+// /api/energy/daily.
 func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots SnapshotSource, alertSource AlertSource,
 	historySource HistorySource, opts ...Option) *Server {
 	s := &Server{
@@ -106,6 +120,7 @@ func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots Snapshot
 		alerts:   alertSource,
 		history:  historySource,
 		now:      time.Now,
+		loc:      time.Local,
 
 		writeTimeout:       writeTimeout,
 		heartbeatInterval:  heartbeatInterval,
@@ -132,6 +147,7 @@ func (s *Server) routes() {
 	if s.history != nil {
 		s.mux.HandleFunc("GET /api/series", s.handleSeries)
 		s.mux.HandleFunc("GET /api/history", s.handleHistory)
+		s.mux.HandleFunc("GET /api/energy/daily", s.handleEnergyDaily)
 	}
 	s.mux.HandleFunc("GET /metrics", s.handlePrometheus)
 	// Everything else, including unknown /api paths, goes to the SPA handler.

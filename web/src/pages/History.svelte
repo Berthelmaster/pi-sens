@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
-  import { getSeriesKeys } from '../api'
+  import {
+    getEnergyDaily,
+    getSeriesKeys,
+    type EnergyDailyResponse,
+  } from '../api'
   import Card from '../components/Card.svelte'
+  import EnergyChart from '../components/EnergyChart.svelte'
   import HistoryChart from '../components/HistoryChart.svelte'
   import {
     AUTO_REFRESH_MS,
@@ -64,9 +69,45 @@
   const main = new HistoryQuery()
   const customQuery = new HistoryQuery()
 
+  // Energy per day covers the last 30 days whatever the range, so it loads
+  // on its own and refreshes slowly: today's bar only grows by a few Wh in
+  // five minutes.
+  const ENERGY_DAYS = 30
+  const ENERGY_REFRESH_MS = 5 * 60_000
+  let energy = $state.raw<EnergyDailyResponse | null>(null)
+  let energyError = $state<string | null>(null)
+  let energyLoading = $state(false)
+  let energyCtrl: AbortController | undefined
+
+  async function loadEnergy() {
+    energyCtrl?.abort()
+    const ctrl = new AbortController()
+    energyCtrl = ctrl
+    energyLoading = true
+    try {
+      const res = await getEnergyDaily(ENERGY_DAYS, ctrl.signal)
+      if (!ctrl.signal.aborted) {
+        energy = res
+        energyError = null
+      }
+    } catch (err) {
+      if (!ctrl.signal.aborted) {
+        energyError = err instanceof Error ? err.message : String(err)
+      }
+    } finally {
+      if (energyCtrl === ctrl) energyLoading = false
+    }
+  }
+
   onMount(() => {
     loadKeys()
+    loadEnergy()
+    const energyTimer = setInterval(() => {
+      if (!document.hidden) loadEnergy()
+    }, ENERGY_REFRESH_MS)
     return () => {
+      clearInterval(energyTimer)
+      energyCtrl?.abort()
       keysCtrl?.abort()
       main.abort()
       customQuery.abort()
@@ -314,6 +355,22 @@
         {/each}
       </Card>
     {/each}
+
+    <div class="full">
+      <Card title="Energy per day">
+        {#if energyError && energy}
+          <p class="error" role="alert">
+            Couldn't refresh the energy per day: {energyError}
+          </p>
+        {/if}
+        <EnergyChart
+          data={energy}
+          loading={energyLoading}
+          error={energyError}
+          label="Energy per day, last {ENERGY_DAYS} days"
+        />
+      </Card>
+    </div>
 
     <div class="full">
       <Card title="Custom chart">
