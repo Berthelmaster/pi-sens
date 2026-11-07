@@ -8,7 +8,7 @@
     formatRatio,
     memoryBreakdown,
     memorySection,
-    num,
+    positive,
     zramSwapSummary,
     type MemorySection,
   } from '../types/memory'
@@ -24,13 +24,13 @@
   let mem = $derived<Partial<MemorySection>>(
     section && !isCollectorError(section) ? section : {},
   )
-  let known = $derived(num(mem.total_bytes) > 0)
+  let known = $derived(positive(mem.total_bytes) > 0)
 
   let usedPct = $derived(known ? mem.used_pct : undefined)
   let segments = $derived(memoryBreakdown(mem))
 
   let swap = $derived(mem.swap)
-  let hasSwap = $derived(num(swap?.total_bytes) > 0)
+  let hasSwap = $derived(positive(swap?.total_bytes) > 0)
   let zram = $derived(zramSwapSummary(mem.zram))
 </script>
 

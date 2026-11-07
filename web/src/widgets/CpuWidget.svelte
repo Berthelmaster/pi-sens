@@ -8,7 +8,7 @@
   import Card from '../components/Card.svelte'
   import Gauge, { gaugeStatus } from '../components/Gauge.svelte'
   import Sparkline from '../components/Sparkline.svelte'
-  import { formatPercent } from '../lib/format'
+  import { formatPercent, num } from '../lib/format'
   import { seriesHistory, snapshot } from '../lib/live'
   import {
     coreRows,
@@ -18,7 +18,6 @@
     formatMhz,
     governors,
     maxMhz,
-    num,
     showIowait,
     type CoreRow,
     type CpuSection,

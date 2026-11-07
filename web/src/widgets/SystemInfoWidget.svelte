@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { formatBytes, PLACEHOLDER } from '../lib/format'
+  import { formatBytes, num, PLACEHOLDER } from '../lib/format'
   import type { BoardInfo } from '../types/sysinfo'
 
   /**
@@ -56,11 +56,6 @@
   /** A non-empty string field, or undefined. */
   function text(v: unknown): string | undefined {
     return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined
-  }
-
-  /** A finite number field, or undefined. */
-  function num(v: unknown): number | undefined {
-    return typeof v === 'number' && Number.isFinite(v) ? v : undefined
   }
 </script>
 

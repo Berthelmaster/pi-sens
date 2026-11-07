@@ -34,6 +34,7 @@ Each card on the Overview page is one component in this folder. The layout shell
 - `alerts` is the latest set of firing and resolved alerts (`types/alerts.ts`), `null` until known or when the backend has alerts turned off.
 - `seriesHistory(key)` keeps the last five minutes of one series key. Samples without the key are left out.
 - Format values with the helpers in `web/src/lib/format.ts` (`formatBytes`, `formatBitsPerSecond`, `formatPercent`, `formatDuration`, `formatTemp`, `formatHz`). They show `–` for a missing value, so series values can go straight in.
+- Read untyped number fields from collector sections with `num(v)` from `web/src/lib/format.ts`. It returns the value when it is a finite number and `undefined` otherwise, so don't write your own copy.
 
 ## Component tests
 

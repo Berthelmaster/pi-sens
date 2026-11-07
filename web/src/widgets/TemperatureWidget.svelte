@@ -1,7 +1,7 @@
 <script lang="ts">
   import Card, { type CardStatus } from '../components/Card.svelte'
   import Sparkline from '../components/Sparkline.svelte'
-  import { formatPercent, formatTemp, PLACEHOLDER } from '../lib/format'
+  import { formatPercent, formatTemp, num, PLACEHOLDER } from '../lib/format'
   import { seriesHistory, snapshot } from '../lib/live'
   import {
     FAN_PWM_SERIES,
@@ -58,10 +58,6 @@
   let fanHistory = $derived(
     seriesHistory(rpm === undefined ? FAN_PWM_SERIES : FAN_RPM_SERIES),
   )
-
-  function num(v: unknown): number | undefined {
-    return typeof v === 'number' && Number.isFinite(v) ? v : undefined
-  }
 
   function sensorTitle(s: TemperatureSensor): string {
     const what = [s.type, s.label].filter(Boolean).join(' · ')

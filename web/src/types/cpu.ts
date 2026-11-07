@@ -1,4 +1,4 @@
-import { formatHz, PLACEHOLDER } from '../lib/format'
+import { formatHz, num, PLACEHOLDER } from '../lib/format'
 import type { CollectorError, Snapshot } from './snapshot'
 
 /**
@@ -96,11 +96,6 @@ export interface CoreRow {
   usage?: number
   /** Current frequency in MHz; undefined without cpufreq. */
   mhz?: number
-}
-
-/** A finite number, or undefined. */
-export function num(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
 
 /**
