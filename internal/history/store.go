@@ -50,6 +50,31 @@ var migrations = []string{
 		value     REAL NOT NULL,
 		PRIMARY KEY (series_id, ts)
 	) WITHOUT ROWID;`,
+
+	// 2: rollups, see rollup.go. n is the number of raw samples behind a
+	// row, so the 15 minute average can weight the 1 minute ones.
+	`CREATE TABLE samples_1m (
+		series_id INTEGER NOT NULL,
+		ts        INTEGER NOT NULL, -- bucket start, unix seconds
+		avg       REAL NOT NULL,
+		min       REAL NOT NULL,
+		max       REAL NOT NULL,
+		n         INTEGER NOT NULL,
+		PRIMARY KEY (series_id, ts)
+	) WITHOUT ROWID;
+	CREATE TABLE samples_15m (
+		series_id INTEGER NOT NULL,
+		ts        INTEGER NOT NULL, -- bucket start, unix seconds
+		avg       REAL NOT NULL,
+		min       REAL NOT NULL,
+		max       REAL NOT NULL,
+		n         INTEGER NOT NULL,
+		PRIMARY KEY (series_id, ts)
+	) WITHOUT ROWID;
+	CREATE TABLE rollup_state (
+		name       TEXT PRIMARY KEY, -- rollup table
+		done_until INTEGER NOT NULL  -- end of the last aggregated bucket, unix seconds
+	);`,
 }
 
 // Sample is the value of every series at one point in time.
@@ -65,6 +90,12 @@ type Store struct {
 
 	mu  sync.Mutex       // serialises Insert
 	ids map[string]int64 // series key to id, guarded by mu
+
+	// written is the oldest timestamp stored since the last takeWritten,
+	// valid if hasWritten. The downsampler uses it to notice samples that
+	// arrive after their bucket was aggregated. Guarded by mu.
+	written    int64
+	hasWritten bool
 }
 
 // Open opens the database in dir, creating the directory, the file and the
@@ -214,11 +245,15 @@ func (s *Store) Insert(ctx context.Context, samples []Sample) error {
 
 	// IDs of keys added in this transaction only become valid once it commits.
 	added := map[string]int64{}
+	oldest, stored := int64(0), false
 	for _, smp := range samples {
 		ts := smp.Time.Unix()
 		for key, v := range smp.Values {
 			if math.IsNaN(v) || math.IsInf(v, 0) {
 				continue
+			}
+			if !stored || ts < oldest {
+				oldest, stored = ts, true
 			}
 			id, ok := s.ids[key]
 			if !ok {
@@ -242,5 +277,33 @@ func (s *Store) Insert(ctx context.Context, samples []Sample) error {
 	for k, id := range added {
 		s.ids[k] = id
 	}
+	if stored {
+		s.markWritten(oldest)
+	}
 	return nil
+}
+
+// markWritten records that samples from ts on were stored. The caller holds
+// mu.
+func (s *Store) markWritten(ts int64) {
+	if !s.hasWritten || ts < s.written {
+		s.written, s.hasWritten = ts, true
+	}
+}
+
+// takeWritten returns the oldest timestamp stored since the last call, and
+// false if nothing was stored.
+func (s *Store) takeWritten() (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ts, ok := s.written, s.hasWritten
+	s.written, s.hasWritten = 0, false
+	return ts, ok
+}
+
+// restoreWritten puts back what takeWritten returned, for a run that failed.
+func (s *Store) restoreWritten(ts int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.markWritten(ts)
 }
