@@ -19,6 +19,8 @@ const (
 	DefaultListen   = ":8080"
 	DefaultInterval = 2 * time.Second
 	DefaultDataDir  = "./data"
+
+	DefaultHistoryInterval = 10 * time.Second
 )
 
 // Environment variable names.
@@ -26,7 +28,9 @@ const (
 	EnvListen   = "PISENS_LISTEN"
 	EnvInterval = "PISENS_INTERVAL"
 	EnvDataDir  = "PISENS_DATA_DIR"
-	EnvAlerts   = "PISENS_ALERTS_FILE"
+
+	EnvHistoryInterval = "PISENS_HISTORY_INTERVAL"
+	EnvAlerts          = "PISENS_ALERTS_FILE"
 )
 
 // Config is the resolved runtime configuration.
@@ -37,6 +41,9 @@ type Config struct {
 	Interval time.Duration
 	// DataDir is where pisens keeps persistent data.
 	DataDir string
+	// HistoryInterval is how often samples are written to the history
+	// database.
+	HistoryInterval time.Duration
 	// AlertsFile is a YAML file of alert rules that replaces the built-in
 	// ones. Empty means use the built-in rules.
 	AlertsFile string
@@ -44,6 +51,10 @@ type Config struct {
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
 var ErrHelp = flag.ErrHelp
+
+// ErrVersion is returned when the user asked for the version with --version.
+// The caller prints it and exits.
+var ErrVersion = errors.New("version requested")
 
 // Load resolves the configuration from args (without the program name) and
 // the environment, looked up through getenv. Usage and parse errors are
@@ -53,20 +64,34 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		Listen:   DefaultListen,
 		Interval: DefaultInterval,
 		DataDir:  DefaultDataDir,
+
+		HistoryInterval: DefaultHistoryInterval,
 	}
 
+	// Invalid environment values are reported after the flags are parsed, so
+	// --help and --version still work with a broken environment file.
+	var envErrs []error
 	if v := getenv(EnvListen); v != "" {
 		cfg.Listen = v
 	}
 	if v := getenv(EnvInterval); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvInterval, v, err)
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: %w", EnvInterval, v, err))
+		} else {
+			cfg.Interval = d
 		}
-		cfg.Interval = d
 	}
 	if v := getenv(EnvDataDir); v != "" {
 		cfg.DataDir = v
+	}
+	if v := getenv(EnvHistoryInterval); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: %w", EnvHistoryInterval, v, err))
+		} else {
+			cfg.HistoryInterval = d
+		}
 	}
 	cfg.AlertsFile = getenv(EnvAlerts)
 
@@ -76,9 +101,18 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "HTTP listen address (env "+EnvListen+")")
 	fs.DurationVar(&cfg.Interval, "interval", cfg.Interval, "sample interval (env "+EnvInterval+")")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory (env "+EnvDataDir+")")
+	fs.DurationVar(&cfg.HistoryInterval, "history-interval", cfg.HistoryInterval,
+		"how often samples are written to the history database (env "+EnvHistoryInterval+")")
 	fs.StringVar(&cfg.AlertsFile, "alerts-file", cfg.AlertsFile, "YAML file of alert rules that replaces the built-in rules (env "+EnvAlerts+")")
+	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
+		return Config{}, err
+	}
+	if *showVersion {
+		return Config{}, ErrVersion
+	}
+	if err := errors.Join(envErrs...); err != nil {
 		return Config{}, err
 	}
 	if fs.NArg() > 0 {
@@ -97,6 +131,9 @@ func (c Config) validate() error {
 	}
 	if c.Interval <= 0 {
 		errs = append(errs, fmt.Errorf("interval must be positive, got %s", c.Interval))
+	}
+	if c.HistoryInterval <= 0 {
+		errs = append(errs, fmt.Errorf("history interval must be positive, got %s", c.HistoryInterval))
 	}
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data directory must not be empty"))

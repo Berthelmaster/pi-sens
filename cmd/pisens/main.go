@@ -14,6 +14,7 @@ import (
 	"github.com/Berthelmaster/pi-sens/internal/alerts"
 	_ "github.com/Berthelmaster/pi-sens/internal/collectors" // registers the collectors
 	"github.com/Berthelmaster/pi-sens/internal/config"
+	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 	"github.com/Berthelmaster/pi-sens/internal/server"
 	"github.com/Berthelmaster/pi-sens/web"
@@ -34,6 +35,10 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 
 	cfg, err := config.Load(args, getenv, stderr)
 	if errors.Is(err, config.ErrHelp) {
+		return 0
+	}
+	if errors.Is(err, config.ErrVersion) {
+		fmt.Println("pisens", version)
 		return 0
 	}
 	if err != nil {
@@ -58,6 +63,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		"listen", cfg.Listen,
 		"interval", cfg.Interval.String(),
 		"data_dir", cfg.DataDir,
+		"history_interval", cfg.HistoryInterval.String(),
 	)
 	rulesFrom := "built-in"
 	if cfg.AlertsFile != "" {
@@ -65,15 +71,35 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	}
 	logger.Info("alert rules loaded", "rules", len(rules), "from", rulesFrom)
 
+	store, err := history.Open(ctx, cfg.DataDir)
+	if err != nil {
+		logger.Error("open history database", "err", err)
+		return 1
+	}
+	logger.Info("history database opened", "path", store.Path())
+
 	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
+
+	// Subscribe before the sampler starts so the first snapshot is stored too.
+	// The subscription closes when the sampler stops, which ends the writer
+	// after it has written what is still pending.
+	snaps, unsubscribe := sampler.Subscribe()
+	defer unsubscribe()
+	writer := history.NewWriter(store, cfg.HistoryInterval, logger)
+	writerDone := make(chan error, 1)
+	go func() { writerDone <- writer.Run(ctx, snaps) }()
+
+	// The evaluator gets its own subscription, also taken before the sampler
+	// starts so the first sample is evaluated.
 	evaluator := alerts.NewEvaluator(rules, logger)
-	// Subscribe before the sampler starts so the first sample is evaluated.
-	snaps, _ := sampler.Subscribe() // closed when the sampler stops
+	alertSnaps, unsubscribeAlerts := sampler.Subscribe()
+	defer unsubscribeAlerts()
 	evaluatorDone := make(chan struct{})
 	go func() {
-		evaluator.Run(ctx, snaps)
+		evaluator.Run(ctx, alertSnaps)
 		close(evaluatorDone)
 	}()
+
 	samplerDone := make(chan error, 1)
 	go func() { samplerDone <- sampler.Run(ctx) }()
 
@@ -84,6 +110,12 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		logger.Error("sampler failed", "err", serr)
 	}
 	<-evaluatorDone
+	if werr := <-writerDone; werr != nil {
+		logger.Error("history writer failed to save pending samples", "err", werr)
+	}
+	if cerr := store.Close(); cerr != nil {
+		logger.Error("close history database", "err", cerr)
+	}
 	if err != nil {
 		logger.Error("server failed", "err", err)
 		return 1

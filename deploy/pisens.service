@@ -1,0 +1,52 @@
+# systemd unit for pisens. deploy/install.sh installs it as
+# /etc/systemd/system/pisens.service. Settings go in /etc/pisens/pisens.env;
+# for anything else use "systemctl edit pisens" rather than editing this file,
+# so an upgrade does not overwrite your changes.
+
+[Unit]
+Description=pisens Raspberry Pi system monitor
+Documentation=https://github.com/Berthelmaster/pi-sens
+After=network.target
+
+[Service]
+Type=simple
+User=pisens
+Group=pisens
+# vcgencmd talks to the firmware through /dev/vcio, which belongs to the video
+# group. Without it the Pi health sections (throttling, voltages, clocks,
+# power) show as unavailable.
+SupplementaryGroups=video
+
+# The leading "-" means a missing file is fine and the defaults apply.
+EnvironmentFile=-/etc/pisens/pisens.env
+# systemd creates /var/lib/pisens owned by the pisens user. It is the only
+# writable path under ProtectSystem=strict, so the data directory is fixed
+# here; the flag also wins over PISENS_DATA_DIR from the environment file.
+StateDirectory=pisens
+StateDirectoryMode=0750
+ExecStart=/usr/local/bin/pisens --data-dir /var/lib/pisens
+
+Restart=on-failure
+RestartSec=5s
+
+# Hardening. /proc and /sys stay readable (that is where the metrics come
+# from) and /dev is left alone so vcgencmd can reach /dev/vcio, which is why
+# ProtectProc, ProcSubset and PrivateDevices are not set.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+# pisens needs no capabilities. To listen on a port below 1024, add
+# AmbientCapabilities=CAP_NET_BIND_SERVICE and
+# CapabilityBoundingSet=CAP_NET_BIND_SERVICE with "systemctl edit pisens".
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
