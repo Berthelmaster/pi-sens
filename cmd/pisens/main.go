@@ -33,6 +33,10 @@ func run() int {
 	if errors.Is(err, config.ErrHelp) {
 		return 0
 	}
+	if errors.Is(err, config.ErrVersion) {
+		fmt.Println("pisens", version)
+		return 0
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pisens:", err)
 		return 2
