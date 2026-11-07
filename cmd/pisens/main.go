@@ -14,6 +14,7 @@ import (
 	"github.com/Berthelmaster/pi-sens/internal/config"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 	"github.com/Berthelmaster/pi-sens/internal/server"
+	"github.com/Berthelmaster/pi-sens/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -52,7 +53,7 @@ func run() int {
 	samplerDone := make(chan error, 1)
 	go func() { samplerDone <- sampler.Run(ctx) }()
 
-	srv := server.New(cfg.Listen, version, logger, sampler)
+	srv := server.New(cfg.Listen, version, web.Dist(), logger, sampler)
 	err = srv.Run(ctx)
 	stop() // stop the sampler too if the server failed on its own
 	if serr := <-samplerDone; serr != nil {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 	"github.com/Berthelmaster/pi-sens/internal/server"
+	"github.com/Berthelmaster/pi-sens/web"
 )
 
 // TestMetricsEndpoint wires the registered collectors, the sampler and the
@@ -26,7 +27,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		Logger:   logger,
 	})
 	sampler.Sample(context.Background())
-	srv := server.New(":0", "dev", logger, sampler)
+	srv := server.New(":0", "dev", web.Dist(), logger, sampler)
 
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))

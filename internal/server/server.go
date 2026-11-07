@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,10 +33,11 @@ type SnapshotSource interface {
 	Subscribe() (<-chan metrics.Snapshot, func())
 }
 
-// Server serves the pisens HTTP API.
+// Server serves the pisens HTTP API and the web UI.
 type Server struct {
 	addr     string
 	version  string
+	ui       fs.FS
 	logger   *slog.Logger
 	mux      *http.ServeMux
 	snapshot SnapshotSource
@@ -47,11 +49,13 @@ type Server struct {
 }
 
 // New creates a server that listens on addr, reports version from the health
-// endpoint and serves metrics from snapshots.
-func New(addr, version string, logger *slog.Logger, snapshots SnapshotSource) *Server {
+// endpoint, serves metrics from snapshots and serves the single-page app in ui
+// at /. ui is normally web.Dist().
+func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots SnapshotSource) *Server {
 	s := &Server{
 		addr:     addr,
 		version:  version,
+		ui:       ui,
 		logger:   logger,
 		mux:      http.NewServeMux(),
 		snapshot: snapshots,
@@ -68,6 +72,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /api/stream", s.handleStream)
+	// Everything else, including unknown /api paths, goes to the SPA handler.
+	s.mux.Handle("GET /", spaHandler{ui: s.ui, logger: s.logger})
 }
 
 // Handler returns the server's root HTTP handler.
@@ -127,12 +133,12 @@ type healthResponse struct {
 	Version string `json:"version"`
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Version: s.version})
-}
-
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Version: s.version})
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
