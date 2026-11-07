@@ -1,5 +1,6 @@
 <script lang="ts">
   import CpuWidget from '../widgets/CpuWidget.svelte'
+  import EnergyWidget from '../widgets/EnergyWidget.svelte'
   import MemoryWidget from '../widgets/MemoryWidget.svelte'
   import NetworkWidget from '../widgets/NetworkWidget.svelte'
   import PiHealthWidget from '../widgets/PiHealthWidget.svelte'
@@ -20,6 +21,7 @@
   <StorageWidget />
   <NetworkWidget />
   <PiHealthWidget />
+  <EnergyWidget />
   <ServicesWidget />
   <div class="full">
     <ProcessesWidget />

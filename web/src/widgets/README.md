@@ -10,6 +10,7 @@ Each card on the Overview page is one component in this folder. The layout shell
 - For charts and meters use the shared components: `Sparkline`, `TimeSeriesChart` and `Gauge` in `../components/` (`gaugeStatus` from `Gauge.svelte` gives the matching Card `status`). Run `npm run dev` and open `/dev/charts` to see them with demo data.
 - Use the CSS variables from `web/src/styles/theme.css` for colours so the light and dark themes both work. Component styles stay in the component's `<style>` block.
 - Only edit `pages/Overview.svelte` to add or move a widget, not to build one.
+- `npm run dev` without a backend has no live data. `/dev/energy` shows `EnergyWidget` with mock snapshots in each of its states, passed in through its `snap` and `history` props.
 
 ## Live data
 
@@ -68,7 +69,8 @@ Each card on the Overview page is one component in this folder. The layout shell
 | `StorageWidget.svelte`     | Storage     | `types/storage.ts`     |
 | `NetworkWidget.svelte`     | Network     | `types/network.ts`     |
 | `PiHealthWidget.svelte`    | Pi health   | `types/pihealth.ts`    |
+| `EnergyWidget.svelte`      | Energy      | `types/energy.ts`      |
 | `ServicesWidget.svelte`    | Services    | `types/services.ts`    |
 | `ProcessesWidget.svelte`   | Processes   | `types/processes.ts`   |
 
-`ProcessesWidget` spans the full width of the grid; the others take one column each. `ServicesWidget` renders nothing when the backend reports services as unavailable (no systemd).
+`ProcessesWidget` spans the full width of the grid; the others take one column each. `ServicesWidget` renders nothing when the backend reports services as unavailable (no systemd). `EnergyWidget` shows a short "needs a Raspberry Pi 5" note when the backend has no PMIC readings.
