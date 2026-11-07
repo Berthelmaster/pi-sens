@@ -45,6 +45,9 @@ const (
 	// collector pings besides the default gateway: Cloudflare and Google DNS.
 	DefaultNetQualityTargets  = "1.1.1.1,8.8.8.8"
 	DefaultNetQualityInterval = 10 * time.Second
+	// DefaultNetQualityDNSName is the name the netquality collector looks
+	// up every round to time the DNS resolver.
+	DefaultNetQualityDNSName = "example.com"
 )
 
 // ProcessCmdline values: how much of the process command lines the
@@ -86,6 +89,7 @@ const (
 	EnvNetQuality         = "PISENS_NETQ"
 	EnvNetQualityTargets  = "PISENS_NETQ_TARGETS"
 	EnvNetQualityInterval = "PISENS_NETQ_INTERVAL"
+	EnvNetQualityDNSName  = "PISENS_NETQ_DNS_NAME"
 
 	EnvPrometheus       = "PISENS_PROMETHEUS"
 	EnvAuthUser         = "PISENS_AUTH_USER"
@@ -145,6 +149,9 @@ type Config struct {
 	NetQualityTargets []string
 	// NetQualityInterval is the time between two rounds of pings.
 	NetQualityInterval time.Duration
+	// NetQualityDNSName is the host name looked up every round to time
+	// the system's DNS resolver. Empty means no DNS lookups.
+	NetQualityDNSName string
 	// Prometheus turns on GET /metrics in the Prometheus text format.
 	Prometheus bool
 	// AuthUser and AuthPasswordHash turn on HTTP basic auth for every route
@@ -268,6 +275,10 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if v := getenv(EnvNetQualityTargets); v != "" {
 		netqTargets = v
 	}
+	cfg.NetQualityDNSName = DefaultNetQualityDNSName
+	if v := getenv(EnvNetQualityDNSName); v != "" {
+		cfg.NetQualityDNSName = v
+	}
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
@@ -311,6 +322,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"comma separated internet hosts to ping besides the default gateway, IPv4 addresses or host names (env "+EnvNetQualityTargets+")")
 	fs.DurationVar(&cfg.NetQualityInterval, "netq-interval", cfg.NetQualityInterval,
 		"time between two rounds of network quality pings (env "+EnvNetQualityInterval+")")
+	fs.StringVar(&cfg.NetQualityDNSName, "netq-dns-name", cfg.NetQualityDNSName,
+		"host name to look up every network quality round to time the DNS resolver; empty for none (env "+EnvNetQualityDNSName+")")
 	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
 		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
 	fs.StringVar(&cfg.AuthUser, "auth-user", cfg.AuthUser,
@@ -334,6 +347,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	cfg.WatchServices = splitList(watch)
 	cfg.NetSkip = splitList(netSkip)
 	cfg.NetQualityTargets = splitList(netqTargets)
+	cfg.NetQualityDNSName = strings.TrimSpace(cfg.NetQualityDNSName)
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -425,6 +439,11 @@ func (c Config) validate() error {
 				errs = append(errs, err)
 			}
 		}
+		if c.NetQualityDNSName != "" {
+			if err := checkDNSName(c.NetQualityDNSName); err != nil {
+				errs = append(errs, err)
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -439,6 +458,31 @@ func checkNetQualityTarget(t string) error {
 	}
 	if strings.ContainsAny(t, " \t/:@?#") {
 		return fmt.Errorf("invalid network quality target %q: want an IPv4 address or a host name", t)
+	}
+	return nil
+}
+
+// checkDNSName checks that name is a host name that can be looked up: not
+// an address, at most 253 characters, in labels of 1 to 63 characters
+// without spaces or URL characters. One trailing dot is allowed.
+func checkDNSName(name string) error {
+	bad := func(why string) error {
+		return fmt.Errorf("invalid network quality DNS name %q: %s", name, why)
+	}
+	if _, err := netip.ParseAddr(name); err == nil {
+		return bad("want a host name, not an address")
+	}
+	if strings.ContainsAny(name, " \t/:@?#") {
+		return bad("want a host name")
+	}
+	trimmed := strings.TrimSuffix(name, ".")
+	if len(trimmed) > 253 {
+		return bad("longer than 253 characters")
+	}
+	for _, label := range strings.Split(trimmed, ".") {
+		if label == "" || len(label) > 63 {
+			return bad("want labels of 1 to 63 characters between the dots")
+		}
 	}
 	return nil
 }
