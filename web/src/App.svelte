@@ -1,14 +1,17 @@
 <script lang="ts">
   import type { Component } from 'svelte'
+  import AlertBanner from './components/AlertBanner.svelte'
+  import AlertsNavButton from './components/AlertsNavButton.svelte'
   import ConnectionStatus from './components/ConnectionStatus.svelte'
   import Hostname from './components/Hostname.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
-  import { snapshot } from './lib/live'
+  import { alerts, snapshot } from './lib/live'
   import { followLink, router } from './lib/router.svelte'
   import ChartsDemo from './pages/ChartsDemo.svelte'
   import History from './pages/History.svelte'
   import NotFound from './pages/NotFound.svelte'
   import Overview from './pages/Overview.svelte'
+  import { hasCritical } from './types/alerts'
   import { hostnameOf } from './types/sysinfo'
 
   interface Route {
@@ -34,12 +37,15 @@
   let Page = $derived(active?.page ?? NotFound)
 
   let hostname = $derived(hostnameOf($snapshot))
+  let critical = $derived(hasCritical($alerts?.firing ?? []))
 
   // Name the tab after the Pi once its hostname is known, so several Pis open
-  // side by side can be told apart.
+  // side by side can be told apart, and flag it while a critical alert fires.
   $effect(() => {
-    if (hostname) document.title = `${hostname} – pisens`
-    else document.title = active ? `${active.label} · pisens` : 'pisens'
+    let title = 'pisens'
+    if (hostname) title = `${hostname} – pisens`
+    else if (active) title = `${active.label} · pisens`
+    document.title = critical ? `(!) ${title}` : title
   })
 </script>
 
@@ -60,6 +66,7 @@
           {route.label}
         </a>
       {/each}
+      <AlertsNavButton />
     </nav>
 
     <div class="actions">
@@ -68,6 +75,8 @@
     </div>
   </div>
 </header>
+
+<AlertBanner />
 
 <main>
   <Page />
