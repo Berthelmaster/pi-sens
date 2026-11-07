@@ -283,6 +283,54 @@ func (s *Store) Insert(ctx context.Context, samples []Sample) error {
 	return nil
 }
 
+// dropEmptySeries is run after retention. It deletes the series whose rows
+// have all expired, a key that stopped being reported, so they leave the
+// per-series loops of the downsampler and the series list.
+const dropEmptySeries = `DELETE FROM series AS s
+	WHERE NOT EXISTS (SELECT 1 FROM samples_raw WHERE series_id = s.id)
+		AND NOT EXISTS (SELECT 1 FROM samples_1m WHERE series_id = s.id)
+		AND NOT EXISTS (SELECT 1 FROM samples_15m WHERE series_id = s.id)
+	RETURNING key`
+
+// dropEmptySeries deletes the series that have no rows left in any sample
+// table and returns their keys. It holds mu, so Insert never stores a sample
+// under an id that was just deleted. A key that comes back later gets a new
+// series row.
+func (s *Store) dropEmptySeries(ctx context.Context) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	rows, err := tx.QueryContext(ctx, dropEmptySeries)
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		delete(s.ids, key)
+	}
+	return keys, nil
+}
+
 // markWritten records that samples from ts on were stored. The caller holds
 // mu.
 func (s *Store) markWritten(ts int64) {
