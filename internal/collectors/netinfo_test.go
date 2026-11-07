@@ -35,8 +35,8 @@ func (f fakeAddrs) Addrs() (map[string][]netip.Prefix, error) {
 	return out, nil
 }
 
-// iwNotFound is what ExecRunner returns when iw is not installed.
-var iwNotFound = fmt.Errorf("iw: %w", &exec.Error{Name: "iw", Err: exec.ErrNotFound})
+// errIwNotFound is what ExecRunner returns when iw is not installed.
+var errIwNotFound = fmt.Errorf("iw: %w", &exec.Error{Name: "iw", Err: exec.ErrNotFound})
 
 const iwLinkWlan0 = `Connected to dc:a6:32:01:02:03 (on wlan0)
 	SSID: Caf\xc3\xa9 Wi-Fi
@@ -165,7 +165,7 @@ func TestNetinfoWiFi(t *testing.T) {
 func TestNetinfoWithoutIw(t *testing.T) {
 	addrs := fakeAddrs{}
 	runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
-		"iw dev wlan0 link": {Err: iwNotFound},
+		"iw dev wlan0 link": {Err: errIwNotFound},
 	}}
 	n := &netinfo{addrs: addrs}
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
