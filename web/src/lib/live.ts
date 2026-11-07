@@ -149,7 +149,8 @@ export interface Live {
   snapshot: Readable<Snapshot | null>
   /**
    * The latest alerts, or null until they arrive. Stays null when the
-   * backend has alerts turned off.
+   * backend has alerts turned off, and goes back to null when a reconnect
+   * finds them turned off.
    */
   alerts: Readable<AlertSet | null>
   connection: Readable<Connection>
@@ -192,6 +193,13 @@ export function createLive(opts: LiveOptions = {}): Live {
   let latestTime: number | null = null
   let haveSnapshot = false
   let haveAlerts = false
+  // Alerts events received so far, whether the current stream has sent any,
+  // and whether any stream has opened before. A reopened stream may be
+  // talking to a restarted backend that has alerts turned off and never
+  // sends any.
+  let alertEvents = 0
+  let alertsOnStream = false
+  let opened = false
 
   let source: EventSourceLike | null = null
   let failures = 0
@@ -243,6 +251,8 @@ export function createLive(opts: LiveOptions = {}): Live {
     // so the newest event always wins. Versions are not compared: they start
     // over when the backend restarts.
     haveAlerts = true
+    alertEvents++
+    alertsOnStream = true
     alertSet.set(set)
   }
 
@@ -250,10 +260,15 @@ export function createLive(opts: LiveOptions = {}): Live {
     disconnect()
     const es = openStream(streamUrl)
     source = es
+    alertsOnStream = false
     es.onopen = () => {
       if (source !== es) return
       failures = 0
       setState('live')
+      // Without this, alerts from before a restart with alerts turned off
+      // would stay on screen until a reload.
+      if (opened && haveAlerts && !alertsOnStream) loadAlerts()
+      opened = true
     }
     es.addEventListener('snapshot', (ev) => {
       if (source === es) onSnapshot(ev)
@@ -309,17 +324,26 @@ export function createLive(opts: LiveOptions = {}): Live {
 
   function loadAlerts() {
     // Same as loadInitial: the stream sends the alerts on connect too, and
-    // wins if it is first. A backend with alerts turned off answers 404.
+    // wins if it is first. A backend with alerts turned off answers 404,
+    // which also clears alerts left over from before a reconnect.
+    alertsFetch?.abort()
     const ctrl = new AbortController()
     alertsFetch = ctrl
+    const seen = alertEvents
+    const stale = () => ctrl.signal.aborted || alertEvents !== seen
     fetchFn(alertsUrl, { signal: ctrl.signal })
       .then(async (res) => {
+        if (stale()) return
+        if (res.status === 404) {
+          haveAlerts = false
+          alertSet.set(null)
+          return
+        }
         if (!res.ok) return
         const set = (await res.json()) as AlertSet
-        if (!haveAlerts && !ctrl.signal.aborted) {
-          haveAlerts = true
-          alertSet.set(set)
-        }
+        if (stale()) return
+        haveAlerts = true
+        alertSet.set(set)
       })
       .catch(() => {})
       .finally(() => {
