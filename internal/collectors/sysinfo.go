@@ -98,7 +98,7 @@ func (s *sysinfo) Collect(_ context.Context, env *metrics.Env) (metrics.Result, 
 		// nr_threads: every task the scheduler knows, threads included.
 		Threads: load.TotalTasks,
 	}
-	if d.Hostname, _, err = sysinfoReadString(env.FS, "proc/sys/kernel/hostname"); err != nil {
+	if d.Hostname, _, err = readValue(env.FS, "proc/sys/kernel/hostname"); err != nil {
 		return metrics.Result{}, err
 	}
 
@@ -133,13 +133,13 @@ func (s *sysinfo) Collect(_ context.Context, env *metrics.Env) (metrics.Result, 
 func readSysinfoStatic(fsys fs.FS) (sysinfoStatic, error) {
 	var st sysinfoStatic
 	var err error
-	if st.kernel, _, err = sysinfoReadString(fsys, "proc/sys/kernel/osrelease"); err != nil {
+	if st.kernel, _, err = readValue(fsys, "proc/sys/kernel/osrelease"); err != nil {
 		return st, err
 	}
 	// /proc/sys/kernel/arch exists from Linux 6.1. Before that, fall back to
 	// the architecture pisens was built for, which is close enough.
 	var ok bool
-	if st.arch, ok, err = sysinfoReadString(fsys, "proc/sys/kernel/arch"); err != nil {
+	if st.arch, ok, err = readValue(fsys, "proc/sys/kernel/arch"); err != nil {
 		return st, err
 	}
 	if !ok {
@@ -354,26 +354,8 @@ func readCPUInfoBoard(fsys fs.FS) (map[string]string, error) {
 // readDeviceTreeString reads a device-tree string property, which ends in a
 // NUL. It is empty if the property does not exist.
 func readDeviceTreeString(fsys fs.FS, name string) (string, error) {
-	b, err := fs.ReadFile(fsys, name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(strings.TrimRight(string(b), "\x00")), nil
-}
-
-// sysinfoReadString reads a one-line file. ok is false if it does not exist.
-func sysinfoReadString(fsys fs.FS, name string) (s string, ok bool, err error) {
-	b, err := fs.ReadFile(fsys, name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return strings.TrimSpace(string(b)), true, nil
+	s, _, err := readValue(fsys, name)
+	return strings.TrimSpace(strings.TrimRight(s, "\x00")), err
 }
 
 // utmp record layout used by glibc on Linux, the same on 32 and 64-bit

@@ -3,7 +3,6 @@ package collectors
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"math"
 	"path"
@@ -107,7 +106,7 @@ type tempZones struct {
 
 func tempReadZones(fsys fs.FS, names temperatureNames) (tempZones, error) {
 	zones := tempZones{skipHwmon: map[string]bool{}}
-	nums, err := tempNumberedEntries(fsys, tempThermalDir, "thermal_zone")
+	nums, err := numberedEntries(fsys, tempThermalDir, "thermal_zone")
 	if err != nil {
 		return zones, err
 	}
@@ -122,7 +121,7 @@ func tempReadZones(fsys fs.FS, names temperatureNames) (tempZones, error) {
 		if !ok {
 			continue
 		}
-		typ, _ := tempReadValue(fsys, path.Join(dir, "type"))
+		typ, _, _ := readValue(fsys, path.Join(dir, "type"))
 		trips, err := tempReadTrips(fsys, dir)
 		if err != nil {
 			return zones, err
@@ -133,7 +132,7 @@ func tempReadZones(fsys fs.FS, names temperatureNames) (tempZones, error) {
 		if typ != "" {
 			zones.skipHwmon["name:"+strings.ReplaceAll(typ, "-", "_")] = true
 		}
-		if hw, err := tempNumberedEntries(fsys, dir, "hwmon"); err == nil {
+		if hw, err := numberedEntries(fsys, dir, "hwmon"); err == nil {
 			for _, h := range hw {
 				zones.skipHwmon["hwmon"+strconv.Itoa(h)] = true
 			}
@@ -183,7 +182,7 @@ func tempReadTrips(fsys fs.FS, dir string) ([]temperatureTrip, error) {
 		if !ok {
 			continue
 		}
-		typ, _ := tempReadValue(fsys, prefix+"_type")
+		typ, _, _ := readValue(fsys, prefix+"_type")
 		trips = append(trips, temperatureTrip{Type: typ, TempC: temp})
 	}
 	return trips, nil
@@ -193,7 +192,7 @@ func tempReadTrips(fsys fs.FS, dir string) ([]temperatureTrip, error) {
 // those in skip, which holds "hwmon<N>" directory names and "name:<chip>"
 // entries.
 func tempReadHwmon(fsys fs.FS, names temperatureNames, skip map[string]bool) ([]temperatureSensor, error) {
-	nums, err := tempNumberedEntries(fsys, tempHwmonDir, "hwmon")
+	nums, err := numberedEntries(fsys, tempHwmonDir, "hwmon")
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +200,7 @@ func tempReadHwmon(fsys fs.FS, names temperatureNames, skip map[string]bool) ([]
 	for _, n := range nums {
 		id := "hwmon" + strconv.Itoa(n)
 		dir := path.Join(tempHwmonDir, id)
-		chip, _ := tempReadValue(fsys, path.Join(dir, "name"))
+		chip, _, _ := readValue(fsys, path.Join(dir, "name"))
 		if skip[id] || (chip != "" && skip["name:"+chip]) {
 			continue
 		}
@@ -217,7 +216,7 @@ func tempReadHwmon(fsys fs.FS, names temperatureNames, skip map[string]bool) ([]
 			if !ok {
 				continue
 			}
-			label, _ := tempReadValue(fsys, path.Join(dir, chID+"_label"))
+			label, _, _ := readValue(fsys, path.Join(dir, chID+"_label"))
 			if base == "" {
 				base = names.claim(temperatureBaseName(chip, id))
 			}
@@ -266,54 +265,21 @@ func tempHwmonChannels(fsys fs.FS, dir string) []int {
 	return chans
 }
 
-// tempNumberedEntries returns N for every <prefix><N> entry of dir, ascending. A
-// missing dir yields none.
-func tempNumberedEntries(fsys fs.FS, dir, prefix string) ([]int, error) {
-	entries, err := fs.ReadDir(fsys, dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var nums []int
-	for _, e := range entries {
-		s, ok := strings.CutPrefix(e.Name(), prefix)
-		if !ok {
-			continue
-		}
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			nums = append(nums, n)
-		}
-	}
-	sort.Ints(nums)
-	return nums, nil
-}
-
 // tempReadMillidegrees reads a sysfs temperature in m°C and returns it in °C
 // rounded to one decimal. ok is false if the file is missing or cannot be
 // read; sysfs returns errors such as EIO or ENODATA for sensors that are
 // asleep or not ready. A value that is not a number is an error.
 func tempReadMillidegrees(fsys fs.FS, name string) (c float64, ok bool, err error) {
-	s, ok := tempReadValue(fsys, name)
-	if !ok {
+	m, ok, err := readInt(fsys, name)
+	// Only a bad value is an error; a failed read is a sensor that is not ready.
+	var numErr *strconv.NumError
+	if errors.As(err, &numErr) {
+		return 0, false, err
+	}
+	if err != nil || !ok {
 		return 0, false, nil
 	}
-	m, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0, false, fmt.Errorf("%s: %w", name, err)
-	}
 	return math.Round(float64(m)/100) / 10, true, nil
-}
-
-// tempReadValue reads a single-value sysfs file. ok is false if it is
-// missing or cannot be read.
-func tempReadValue(fsys fs.FS, name string) (string, bool) {
-	b, err := fs.ReadFile(fsys, name)
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(b)), true
 }
 
 // temperatureBaseName turns a zone type or chip name into a series name:

@@ -5,6 +5,10 @@
 //
 //   - One file per collector, named after it (cpu.go, mem.go, ...), with its
 //     tests in <name>_test.go. Adding a collector never edits a shared file.
+//     The exception is sysfs.go, which holds the read helpers collectors share:
+//     readValue and readInt for single-value files and numberedEntries for
+//     <prefix><N> directory entries. Use them rather than a local copy, and
+//     add a helper there only once a second collector needs it.
 //
 //   - Each collector registers itself from its own init function:
 //

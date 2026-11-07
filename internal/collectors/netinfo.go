@@ -193,7 +193,7 @@ func netinfoInterfaceNames(fsys fs.FS) ([]string, error) {
 			continue
 		}
 		// ARPHRD_LOOPBACK; lo is the only one in practice.
-		if typ, _ := netinfoReadValue(fsys, path.Join(netinfoSysDir, name, "type")); name == "lo" || typ == "772" {
+		if typ, _, _ := readValue(fsys, path.Join(netinfoSysDir, name, "type")); name == "lo" || typ == "772" {
 			continue
 		}
 		names = append(names, name)
@@ -206,8 +206,8 @@ func netinfoInterfaceNames(fsys fs.FS) ([]string, error) {
 // the directory was listed.
 func netinfoReadInterface(fsys fs.FS, name string) (iface netinfoInterface, ok bool, err error) {
 	dir := path.Join(netinfoSysDir, name)
-	state, ok := netinfoReadValue(fsys, path.Join(dir, "operstate"))
-	if !ok {
+	state, ok, err := readValue(fsys, path.Join(dir, "operstate"))
+	if err != nil || !ok {
 		return iface, false, nil
 	}
 	iface = netinfoInterface{
@@ -219,11 +219,11 @@ func netinfoReadInterface(fsys fs.FS, name string) (iface netinfoInterface, ok b
 
 	// Interfaces without a hardware address (tun, wireguard) have an empty
 	// address file.
-	if mac, _ := netinfoReadValue(fsys, path.Join(dir, "address")); mac != "" && mac != "00:00:00:00:00:00" {
+	if mac, _, _ := readValue(fsys, path.Join(dir, "address")); mac != "" && mac != "00:00:00:00:00:00" {
 		iface.MAC = mac
 	}
 
-	if s, ok := netinfoReadValue(fsys, path.Join(dir, "mtu")); ok {
+	if s, ok, err := readValue(fsys, path.Join(dir, "mtu")); err == nil && ok {
 		mtu, err := strconv.Atoi(s)
 		if err != nil {
 			return iface, false, fmt.Errorf("%s/mtu: %w", dir, err)
@@ -233,7 +233,7 @@ func netinfoReadInterface(fsys fs.FS, name string) (iface netinfoInterface, ok b
 
 	// Reading speed fails with EINVAL on interfaces that have no speed and
 	// gives -1 (SPEED_UNKNOWN) when the link is down.
-	if s, ok := netinfoReadValue(fsys, path.Join(dir, "speed")); ok {
+	if s, ok, err := readValue(fsys, path.Join(dir, "speed")); err == nil && ok {
 		if v, err := strconv.ParseInt(s, 10, 64); err == nil && v > 0 {
 			iface.SpeedMbps = &v
 		}
@@ -449,16 +449,6 @@ func netinfoReadGateway(fsys fs.FS) (*netinfoGateway, error) {
 		return nil, fmt.Errorf("proc/net/route: %w", err)
 	}
 	return best, nil
-}
-
-// netinfoReadValue reads a single-value sysfs file. ok is false if it is
-// missing or cannot be read (speed gives EINVAL on Wi-Fi).
-func netinfoReadValue(fsys fs.FS, name string) (string, bool) {
-	b, err := fs.ReadFile(fsys, name)
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(b)), true
 }
 
 // netinfoSeriesName makes an interface name safe for a dotted series key:

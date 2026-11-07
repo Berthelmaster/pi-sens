@@ -2,14 +2,11 @@ package collectors
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"math"
 	"path"
-	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
@@ -68,9 +65,9 @@ func (fan) Collect(_ context.Context, env *metrics.Env) (metrics.Result, error) 
 	if dir != "" {
 		data.Present = true
 		data.Hwmon = path.Base(dir)
-		data.Chip, _, _ = fanReadValue(env.FS, path.Join(dir, "name"))
+		data.Chip, _, _ = readValue(env.FS, path.Join(dir, "name"))
 
-		rpm, ok, err := fanReadInt(env.FS, path.Join(dir, "fan1_input"))
+		rpm, ok, err := readInt(env.FS, path.Join(dir, "fan1_input"))
 		if err != nil {
 			return metrics.Result{}, err
 		}
@@ -79,7 +76,7 @@ func (fan) Collect(_ context.Context, env *metrics.Env) (metrics.Result, error) 
 			series["fan.rpm"] = float64(rpm)
 		}
 
-		pwm, ok, err := fanReadInt(env.FS, path.Join(dir, "pwm1"))
+		pwm, ok, err := readInt(env.FS, path.Join(dir, "pwm1"))
 		if err != nil {
 			return metrics.Result{}, err
 		}
@@ -104,7 +101,7 @@ func (fan) Collect(_ context.Context, env *metrics.Env) (metrics.Result, error) 
 			name string
 			dst  **int64
 		}{{"cur_state", &data.Level}, {"max_state", &data.MaxLevel}} {
-			v, ok, err := fanReadInt(env.FS, path.Join(cdev, f.name))
+			v, ok, err := readInt(env.FS, path.Join(cdev, f.name))
 			if err != nil {
 				return metrics.Result{}, err
 			}
@@ -125,7 +122,7 @@ func (fan) Collect(_ context.Context, env *metrics.Env) (metrics.Result, error) 
 // otherwise the first chip in /sys/class/hwmon with fan1_input is used.
 func fanFindHwmon(fsys fs.FS) (string, error) {
 	for _, parent := range []string{fanPlatformDir, fanHwmonDir} {
-		nums, err := fanNumberedEntries(fsys, parent, "hwmon")
+		nums, err := numberedEntries(fsys, parent, "hwmon")
 		if err != nil {
 			return "", err
 		}
@@ -142,13 +139,13 @@ func fanFindHwmon(fsys fs.FS) (string, error) {
 // fanFindCoolingDevice returns the directory of the first cooling device whose
 // type is pwm-fan, or "" if there is none.
 func fanFindCoolingDevice(fsys fs.FS) (string, error) {
-	nums, err := fanNumberedEntries(fsys, fanThermalDir, "cooling_device")
+	nums, err := numberedEntries(fsys, fanThermalDir, "cooling_device")
 	if err != nil {
 		return "", err
 	}
 	for _, n := range nums {
 		dir := path.Join(fanThermalDir, "cooling_device"+strconv.Itoa(n))
-		typ, ok, err := fanReadValue(fsys, path.Join(dir, "type"))
+		typ, ok, err := readValue(fsys, path.Join(dir, "type"))
 		if err != nil {
 			return "", err
 		}
@@ -157,55 +154,4 @@ func fanFindCoolingDevice(fsys fs.FS) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-// fanNumberedEntries returns N for every <prefix><N> entry of dir, ascending.
-// A missing dir yields none.
-func fanNumberedEntries(fsys fs.FS, dir, prefix string) ([]int, error) {
-	entries, err := fs.ReadDir(fsys, dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var nums []int
-	for _, e := range entries {
-		s, ok := strings.CutPrefix(e.Name(), prefix)
-		if !ok {
-			continue
-		}
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			nums = append(nums, n)
-		}
-	}
-	sort.Ints(nums)
-	return nums, nil
-}
-
-// fanReadValue reads a single-value sysfs file. ok is false if it does not
-// exist.
-func fanReadValue(fsys fs.FS, name string) (s string, ok bool, err error) {
-	b, err := fs.ReadFile(fsys, name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return strings.TrimSpace(string(b)), true, nil
-}
-
-// fanReadInt reads a sysfs integer. ok is false if the file does not exist; a
-// value that is not an integer is an error.
-func fanReadInt(fsys fs.FS, name string) (v int64, ok bool, err error) {
-	s, ok, err := fanReadValue(fsys, name)
-	if err != nil || !ok {
-		return 0, ok, err
-	}
-	v, err = strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0, false, fmt.Errorf("%s: %w", name, err)
-	}
-	return v, true, nil
 }
