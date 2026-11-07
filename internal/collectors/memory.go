@@ -191,7 +191,7 @@ func readZram(fsys fs.FS) ([]zramDevice, error) {
 			continue
 		}
 		dir := path.Join("sys/block", name)
-		size, ok, err := zramReadValue(fsys, path.Join(dir, "disksize"))
+		size, ok, err := readValue(fsys, path.Join(dir, "disksize"))
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +206,7 @@ func readZram(fsys fs.FS) ([]zramDevice, error) {
 			continue
 		}
 
-		algs, _, err := zramReadValue(fsys, path.Join(dir, "comp_algorithm"))
+		algs, _, err := readValue(fsys, path.Join(dir, "comp_algorithm"))
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +214,7 @@ func readZram(fsys fs.FS) ([]zramDevice, error) {
 
 		// mm_stat: orig_data_size compr_data_size mem_used_total mem_limit
 		// mem_used_max same_pages pages_compacted huge_pages huge_pages_since
-		stat, ok, err := zramReadValue(fsys, path.Join(dir, "mm_stat"))
+		stat, ok, err := readValue(fsys, path.Join(dir, "mm_stat"))
 		if err != nil {
 			return nil, err
 		}
@@ -235,19 +235,6 @@ func readZram(fsys fs.FS) ([]zramDevice, error) {
 		devices = append(devices, dev)
 	}
 	return devices, nil
-}
-
-// zramReadValue reads a single-value sysfs file. ok is false if it does not
-// exist.
-func zramReadValue(fsys fs.FS, name string) (s string, ok bool, err error) {
-	b, err := fs.ReadFile(fsys, name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return strings.TrimSpace(string(b)), true, nil
 }
 
 // selectedZramAlgorithm picks the active algorithm out of comp_algorithm,

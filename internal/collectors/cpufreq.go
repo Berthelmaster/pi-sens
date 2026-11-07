@@ -2,13 +2,10 @@ package collectors
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"path"
-	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
@@ -40,7 +37,7 @@ type cpufreqCore struct {
 func (cpufreq) Name() string { return "cpufreq" }
 
 func (cpufreq) Collect(_ context.Context, env *metrics.Env) (metrics.Result, error) {
-	cores, err := cpufreqCoreNumbers(env.FS)
+	cores, err := numberedEntries(env.FS, cpufreqSysDir, "cpu")
 	if err != nil {
 		return metrics.Result{}, err
 	}
@@ -64,7 +61,7 @@ func (cpufreq) Collect(_ context.Context, env *metrics.Env) (metrics.Result, err
 		if c.MaxMHz, _, err = cpufreqReadMHz(env.FS, path.Join(dir, "scaling_max_freq")); err != nil {
 			return metrics.Result{}, err
 		}
-		if c.Governor, _, err = cpufreqReadValue(env.FS, path.Join(dir, "scaling_governor")); err != nil {
+		if c.Governor, _, err = readValue(env.FS, path.Join(dir, "scaling_governor")); err != nil {
 			return metrics.Result{}, err
 		}
 
@@ -81,55 +78,15 @@ func (cpufreq) Collect(_ context.Context, env *metrics.Env) (metrics.Result, err
 	return metrics.Result{Data: data, Series: series}, nil
 }
 
-// cpufreqCoreNumbers returns the numbers of the cpu<N> directories under
-// sys/devices/system/cpu in ascending order, skipping siblings such as
-// cpufreq and cpuidle. A missing directory yields no cores.
-func cpufreqCoreNumbers(fsys fs.FS) ([]int, error) {
-	entries, err := fs.ReadDir(fsys, cpufreqSysDir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var cores []int
-	for _, e := range entries {
-		num, ok := strings.CutPrefix(e.Name(), "cpu")
-		if !ok {
-			continue
-		}
-		n, err := strconv.Atoi(num)
-		if err != nil || n < 0 {
-			continue
-		}
-		cores = append(cores, n)
-	}
-	sort.Ints(cores)
-	return cores, nil
-}
-
-// cpufreqReadValue reads a single-value sysfs file. ok is false if it does not exist.
-func cpufreqReadValue(fsys fs.FS, name string) (s string, ok bool, err error) {
-	b, err := fs.ReadFile(fsys, name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
-	}
-	return strings.TrimSpace(string(b)), true, nil
-}
-
 // cpufreqReadMHz reads a sysfs frequency in kHz and returns it in MHz. ok is
 // false if the file does not exist.
 func cpufreqReadMHz(fsys fs.FS, name string) (mhz float64, ok bool, err error) {
-	s, ok, err := cpufreqReadValue(fsys, name)
+	khz, ok, err := readInt(fsys, name)
 	if err != nil || !ok {
-		return 0, ok, err
+		return 0, false, err
 	}
-	khz, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return 0, false, fmt.Errorf("%s: %w", name, err)
+	if khz < 0 {
+		return 0, false, fmt.Errorf("%s: negative frequency %d", name, khz)
 	}
 	return float64(khz) / 1000, true, nil
 }
