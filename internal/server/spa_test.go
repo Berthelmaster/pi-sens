@@ -25,7 +25,7 @@ func get(t *testing.T, s *Server, target string) *httptest.ResponseRecorder {
 }
 
 func TestUIServesIndexAtRoot(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	for _, target := range []string{"/", "/index.html"} {
 		rec := get(t, s, target)
@@ -45,7 +45,7 @@ func TestUIServesIndexAtRoot(t *testing.T) {
 }
 
 func TestUIDeepLinksServeIndex(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	for _, target := range []string{"/history", "/history/", "/a/b/c", "/assets"} {
 		rec := get(t, s, target)
@@ -63,7 +63,7 @@ func TestUIDeepLinksServeIndex(t *testing.T) {
 }
 
 func TestUIServesStaticFiles(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	tests := []struct {
 		target, body, cache, contentType string
@@ -90,7 +90,7 @@ func TestUIServesStaticFiles(t *testing.T) {
 }
 
 func TestUIMissingFilesAre404(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	for _, target := range []string{"/assets/missing.js", "/robots.txt", "/.gitkeep"} {
 		if rec := get(t, s, target); rec.Code != http.StatusNotFound {
@@ -100,7 +100,7 @@ func TestUIMissingFilesAre404(t *testing.T) {
 }
 
 func TestUnknownAPIPathIsJSON404(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	for _, target := range []string{"/api", "/api/", "/api/nope"} {
 		rec := get(t, s, target)
@@ -114,7 +114,7 @@ func TestUnknownAPIPathIsJSON404(t *testing.T) {
 }
 
 func TestUINotBuilt(t *testing.T) {
-	s := New(":0", "dev", fstest.MapFS{".gitkeep": {}}, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", fstest.MapFS{".gitkeep": {}}, discardLogger(), &fakeSource{}, nil)
 
 	if rec := get(t, s, "/"); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("GET /: status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
@@ -122,7 +122,7 @@ func TestUINotBuilt(t *testing.T) {
 }
 
 func TestUIRejectsOtherMethods(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/history", nil))

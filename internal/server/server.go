@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Berthelmaster/pi-sens/internal/alerts"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
@@ -33,6 +34,16 @@ type SnapshotSource interface {
 	Subscribe() (<-chan metrics.Snapshot, func())
 }
 
+// AlertSource provides the current alerts and a feed of changes to them.
+// *alerts.Evaluator implements it.
+type AlertSource interface {
+	Alerts() alerts.Set
+	// Subscribe returns a channel that receives the new set whenever it
+	// changes and a function that unsubscribes and closes it. The channel is
+	// also closed when the source stops.
+	Subscribe() (<-chan alerts.Set, func())
+}
+
 // Server serves the pisens HTTP API and the web UI.
 type Server struct {
 	addr     string
@@ -41,6 +52,7 @@ type Server struct {
 	logger   *slog.Logger
 	mux      *http.ServeMux
 	snapshot SnapshotSource
+	alerts   AlertSource // nil turns off /api/alerts and alert events
 
 	// Timeouts are fields so tests can shorten them.
 	writeTimeout       time.Duration
@@ -49,9 +61,10 @@ type Server struct {
 }
 
 // New creates a server that listens on addr, reports version from the health
-// endpoint, serves metrics from snapshots and serves the single-page app in ui
-// at /. ui is normally web.Dist().
-func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots SnapshotSource) *Server {
+// endpoint, serves metrics from snapshots and alerts from alertSource, and
+// serves the single-page app in ui at /. ui is normally web.Dist().
+// alertSource may be nil, which leaves out /api/alerts and the alert events.
+func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots SnapshotSource, alertSource AlertSource) *Server {
 	s := &Server{
 		addr:     addr,
 		version:  version,
@@ -59,6 +72,7 @@ func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots Snapshot
 		logger:   logger,
 		mux:      http.NewServeMux(),
 		snapshot: snapshots,
+		alerts:   alertSource,
 
 		writeTimeout:       writeTimeout,
 		heartbeatInterval:  heartbeatInterval,
@@ -72,6 +86,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /api/stream", s.handleStream)
+	if s.alerts != nil {
+		s.mux.HandleFunc("GET /api/alerts", s.handleAlerts)
+	}
 	// Everything else, including unknown /api paths, goes to the SPA handler.
 	s.mux.Handle("GET /", spaHandler{ui: s.ui, logger: s.logger})
 }
@@ -149,6 +166,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, snap)
+}
+
+func (s *Server) handleAlerts(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.alerts.Alerts())
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
