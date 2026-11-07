@@ -299,6 +299,9 @@ func TestNetqRound(t *testing.T) {
 		"netq.1_1_1_1.loss_pct":   0,
 		"netq.8_8_8_8.latency_ms": 25,
 		"netq.8_8_8_8.loss_pct":   40,
+		// The internet as a whole: the best loss, the average latency.
+		"netq.internet_loss_pct":   0,
+		"netq.internet_latency_ms": 18.6,
 	}
 	if !reflect.DeepEqual(series, wantSeries) {
 		t.Errorf("series = %v, want %v", series, wantSeries)
@@ -335,6 +338,7 @@ func TestNetqRound(t *testing.T) {
 		"netq.gateway.loss_pct":   0,
 		"netq.1_1_1_1.loss_pct":   100,
 		"netq.8_8_8_8.loss_pct":   100,
+		"netq.internet_loss_pct":  100,
 	}
 	if !reflect.DeepEqual(series, wantSeries) {
 		t.Errorf("series = %v, want %v", series, wantSeries)
@@ -352,6 +356,48 @@ func TestNetqRound(t *testing.T) {
 	}
 	if got := data.Targets[2].Error; got != "i/o timeout" {
 		t.Errorf("8.8.8.8 error = %q, want i/o timeout", got)
+	}
+}
+
+func TestNetqInternetSeries(t *testing.T) {
+	internet := func(loss float64, latency *float64) netqTargetData {
+		return netqTargetData{Kind: netqInternet, LossPct: loss, LatencyMs: latency}
+	}
+	gateway := netqTargetData{Kind: netqGateway, LossPct: 100}
+	tests := []struct {
+		name    string
+		targets []netqTargetData
+		want    map[string]float64
+	}{
+		{
+			name:    "only the gateway",
+			targets: []netqTargetData{gateway},
+			want:    map[string]float64{},
+		},
+		{
+			name:    "one of two down",
+			targets: []netqTargetData{gateway, internet(100, nil), internet(20, netqF(30))},
+			want:    map[string]float64{"netq.internet_loss_pct": 20, "netq.internet_latency_ms": 30},
+		},
+		{
+			name:    "all down",
+			targets: []netqTargetData{gateway, internet(100, nil), internet(100, nil)},
+			want:    map[string]float64{"netq.internet_loss_pct": 100},
+		},
+		{
+			name:    "both slow",
+			targets: []netqTargetData{internet(0, netqF(150)), internet(0, netqF(200.5))},
+			want:    map[string]float64{"netq.internet_loss_pct": 0, "netq.internet_latency_ms": 175.25},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := map[string]float64{}
+			netqInternetSeries(got, tt.targets)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("series = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -650,8 +696,8 @@ func TestNetqRoundDNS(t *testing.T) {
 	if data.Status != netqGood {
 		t.Errorf("status = %q, want good", data.Status)
 	}
-	if series["netq.dns.lookup_ms"] != 12.346 || series["netq.dns.failures"] != 0 {
-		t.Errorf("series = %v, want netq.dns.lookup_ms 12.346 and netq.dns.failures 0", series)
+	if series["netq.dns.lookup_ms"] != 12.346 || series["netq.dns.failures"] != 0 || series["netq.dns.failing"] != 0 {
+		t.Errorf("series = %v, want netq.dns.lookup_ms 12.346, netq.dns.failures 0 and netq.dns.failing 0", series)
 	}
 
 	// NXDOMAIN fails the lookup and makes the status degraded, though
@@ -667,8 +713,8 @@ func TestNetqRoundDNS(t *testing.T) {
 	if data.Status != netqDegraded {
 		t.Errorf("status = %q, want degraded when only DNS fails", data.Status)
 	}
-	if _, ok := series["netq.dns.lookup_ms"]; ok || series["netq.dns.failures"] != 1 {
-		t.Errorf("series = %v, want no netq.dns.lookup_ms and netq.dns.failures 1", series)
+	if _, ok := series["netq.dns.lookup_ms"]; ok || series["netq.dns.failures"] != 1 || series["netq.dns.failing"] != 1 {
+		t.Errorf("series = %v, want no netq.dns.lookup_ms, netq.dns.failures 1 and netq.dns.failing 1", series)
 	}
 	for _, tg := range data.Targets {
 		if tg.LossPct != 0 {
@@ -696,7 +742,7 @@ func TestNetqRoundDNS(t *testing.T) {
 	if !data.DNS.OK || data.DNS.Failures != 2 || data.DNS.Error != "" || !data.DNS.LastOK.Equal(now) || data.Status != netqGood {
 		t.Errorf("dns = %+v, status %q; want ok with 2 failures and last_ok %v, status good", data.DNS, data.Status, now)
 	}
-	if series["netq.dns.lookup_ms"] != 8 || series["netq.dns.failures"] != 2 {
+	if series["netq.dns.lookup_ms"] != 8 || series["netq.dns.failures"] != 2 || series["netq.dns.failing"] != 0 {
 		t.Errorf("series = %v", series)
 	}
 }
@@ -714,6 +760,9 @@ func TestNetqRoundDNSOff(t *testing.T) {
 	for k := range series {
 		if strings.HasPrefix(k, "netq.dns.") {
 			t.Errorf("series %s without DNS lookups", k)
+		}
+		if strings.HasPrefix(k, "netq.internet_") {
+			t.Errorf("series %s without internet targets", k)
 		}
 	}
 }
@@ -733,7 +782,7 @@ func TestNetqRoundDNSWithoutResolvConf(t *testing.T) {
 	if data.DNS == nil || data.DNS.OK || data.DNS.Resolver != "" || data.DNS.Failures != 1 || data.DNS.Error == "" {
 		t.Errorf("dns = %+v, want a failure with the error and no resolver", data.DNS)
 	}
-	if series["netq.dns.failures"] != 1 || data.Status != netqDegraded {
+	if series["netq.dns.failures"] != 1 || series["netq.dns.failing"] != 1 || data.Status != netqDegraded {
 		t.Errorf("series = %v, status %q; want 1 failure, degraded", series, data.Status)
 	}
 }

@@ -379,6 +379,9 @@ func TestDefaultRulesFire(t *testing.T) {
 		"fs.root.used_pct":             95,
 		"mem.used_pct":                 95,
 		"services.failed":              2,
+		"netq.internet_loss_pct":       100,
+		"netq.internet_latency_ms":     400,
+		"netq.dns.failing":             1,
 	}
 	for at := time.Duration(0); at <= 10*time.Minute; at += 2 * time.Second {
 		e.Evaluate(snapAt(at, bad))
@@ -394,6 +397,9 @@ func TestDefaultRulesFire(t *testing.T) {
 		"cpu-temp-critical@30s",
 		"cpu-temp-high@1m0s",
 		"disk-full@0s",
+		"dns-failing@2m0s",
+		"internet-down@1m0s",
+		"internet-slow@5m0s",
 		"memory-high@2m0s",
 		"rtc-battery-low@10m0s",
 		"services-failed@1m0s",
