@@ -27,6 +27,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: 24 * time.Hour, History1mRetention: 168 * time.Hour, History15mRetention: 2160 * time.Hour,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: 15 * time.Minute,
 				Prometheus:     true,
 			},
@@ -53,8 +54,9 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens", HistoryInterval: 30 * time.Second,
 				HistoryRawRetention: 12 * time.Hour, History1mRetention: 72 * time.Hour, History15mRetention: 720 * time.Hour,
-				AlertsFile:    "/etc/pisens/alerts.yaml",
-				NotifyWebhook: "https://hooks.example.com/pisens?token=abc", NotifyNtfy: "https://ntfy.sh/my-pi",
+				ProcessCmdline: DefaultProcessCmdline,
+				AlertsFile:     "/etc/pisens/alerts.yaml",
+				NotifyWebhook:  "https://hooks.example.com/pisens?token=abc", NotifyNtfy: "https://ntfy.sh/my-pi",
 				NotifyCooldown: 5 * time.Minute,
 				Prometheus:     true,
 			},
@@ -71,8 +73,9 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens", HistoryInterval: time.Minute,
 				HistoryRawRetention: 6 * time.Hour, History1mRetention: 48 * time.Hour, History15mRetention: 8760 * time.Hour,
-				AlertsFile:    "rules.yaml",
-				NotifyWebhook: "http://192.168.1.10:9000/hook", NotifyNtfy: "https://ntfy.example.com/pi",
+				ProcessCmdline: DefaultProcessCmdline,
+				AlertsFile:     "rules.yaml",
+				NotifyWebhook:  "http://192.168.1.10:9000/hook", NotifyNtfy: "https://ntfy.example.com/pi",
 				Prometheus: true,
 			},
 		},
@@ -101,8 +104,9 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second,
 				HistoryRawRetention: 2 * time.Hour, History1mRetention: 24 * time.Hour, History15mRetention: DefaultHistory15mRetention,
-				AlertsFile:    "flag.yaml",
-				NotifyWebhook: "https://env.example.com/hook", NotifyNtfy: "https://ntfy.sh/flag",
+				ProcessCmdline: DefaultProcessCmdline,
+				AlertsFile:     "flag.yaml",
+				NotifyWebhook:  "https://env.example.com/hook", NotifyNtfy: "https://ntfy.sh/flag",
 				NotifyCooldown: time.Hour,
 				Prometheus:     true,
 			},
@@ -113,6 +117,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				WatchServices:  []string{"ssh", "pisens.service", "nginx"},
 				Prometheus:     true,
@@ -125,6 +130,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				WatchServices:  []string{"cron"},
 				Prometheus:     true,
@@ -136,6 +142,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
 				AuthUser:       "admin", AuthPasswordHash: testHash,
@@ -148,6 +155,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
 				AuthUser:       "pi", AuthPasswordHash: testHash,
@@ -160,6 +168,30 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "process cmdline from env",
+			env:  map[string]string{EnvProcessCmdline: "off"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: ProcessCmdlineOff,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+			},
+		},
+		{
+			name: "process cmdline flag wins over env",
+			args: []string{"--process-cmdline", "full"},
+			env:  map[string]string{EnvProcessCmdline: "off"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: ProcessCmdlineFull,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
 			},
@@ -170,6 +202,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 			},
 		},
@@ -179,6 +212,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 			},
 		},
@@ -189,6 +223,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
 				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				ProcessCmdline: DefaultProcessCmdline,
 				NotifyCooldown: DefaultNotifyCooldown,
 				Prometheus:     true,
 			},
@@ -238,6 +273,8 @@ func TestLoadErrors(t *testing.T) {
 		{name: "unknown flag", args: []string{"--nope"}},
 		{name: "space in watched service", args: []string{"--watch-services", "ssh,my service"}},
 		{name: "path as watched service", env: map[string]string{EnvWatchServices: "/etc/systemd/ssh.service"}},
+		{name: "bad env process cmdline", env: map[string]string{EnvProcessCmdline: "partial"}},
+		{name: "bad flag process cmdline", args: []string{"--process-cmdline", "Full"}},
 		{name: "bad env prometheus", env: map[string]string{EnvPrometheus: "maybe"}},
 		{name: "positional args", args: []string{"extra"}},
 		{name: "auth user without hash", args: []string{"--auth-user", "admin"}},

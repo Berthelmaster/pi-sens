@@ -8,14 +8,54 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
-func init() { metrics.Register(&processes{}) }
+// processesCollector is the registered instance, kept so SetProcessCmdline
+// can configure it.
+var processesCollector = &processes{}
+
+func init() { metrics.Register(processesCollector) }
+
+// CmdlineMode is how much of each process's command line the processes
+// collector reports.
+type CmdlineMode int32
+
+const (
+	// CmdlineRedacted reports the command line with the values of secret
+	// looking arguments replaced by "***". It is the zero value.
+	CmdlineRedacted CmdlineMode = iota
+	// CmdlineOff reports only the process name.
+	CmdlineOff
+	// CmdlineFull reports the command line as it is.
+	CmdlineFull
+)
+
+// ParseCmdlineMode parses "off", "redacted" or "full".
+func ParseCmdlineMode(s string) (CmdlineMode, error) {
+	switch s {
+	case "redacted":
+		return CmdlineRedacted, nil
+	case "off":
+		return CmdlineOff, nil
+	case "full":
+		return CmdlineFull, nil
+	}
+	return 0, fmt.Errorf("invalid process command line mode %q: want off, redacted or full", s)
+}
+
+// SetProcessCmdline sets how much of the command lines the processes
+// collector reports. The default is CmdlineRedacted.
+func SetProcessCmdline(m CmdlineMode) {
+	processesCollector.cmdline.Store(int32(m))
+}
 
 // processes reports the processes using the most CPU and the most memory,
 // read from /proc/<pid>/stat, status and cmdline.
@@ -43,6 +83,11 @@ type processes struct {
 	users map[int]string
 
 	statBuf []byte // reused between samples for /proc/<pid>/stat
+
+	// cmdline holds a CmdlineMode. The snapshot is served without auth by
+	// default, so secrets on command lines are redacted unless told
+	// otherwise.
+	cmdline atomic.Int32
 }
 
 const (
@@ -73,7 +118,9 @@ type procInfo struct {
 	Name string `json:"name"`
 	// Command is the full command line, its arguments separated by spaces
 	// and cut at procMaxCmdline bytes. Kernel threads and zombies have none
-	// and show their name in brackets, as ps does: "[kworker/0:1]".
+	// and show their name in brackets, as ps does: "[kworker/0:1]". By
+	// default secrets are redacted (see redactArgs); with CmdlineOff it is
+	// just the name.
 	Command string `json:"command"`
 	// User is the name of the real uid, or the uid itself if /etc/passwd
 	// does not list it.
@@ -156,8 +203,9 @@ func (p *processes) Collect(ctx context.Context, env *metrics.Env) (metrics.Resu
 
 	data := processesData{Count: len(all), Processes: []procInfo{}}
 	reloaded := false
+	mode := CmdlineMode(p.cmdline.Load())
 	for _, s := range procPickTop(all) {
-		info, err := p.details(env.FS, s, &reloaded)
+		info, err := p.details(env.FS, s, mode, &reloaded)
 		if err != nil {
 			continue // exited since we read its stat
 		}
@@ -228,7 +276,7 @@ func procPickTop(all []procStat) []procStat {
 
 // details reads status and cmdline of a picked process. It fails when the
 // process is gone.
-func (p *processes) details(fsys fs.FS, s procStat, reloaded *bool) (procInfo, error) {
+func (p *processes) details(fsys fs.FS, s procStat, mode CmdlineMode, reloaded *bool) (procInfo, error) {
 	dir := "proc/" + strconv.Itoa(s.pid) + "/"
 	status, err := fs.ReadFile(fsys, dir+"status")
 	if err != nil {
@@ -238,15 +286,19 @@ func (p *processes) details(fsys fs.FS, s procStat, reloaded *bool) (procInfo, e
 	if err != nil {
 		return procInfo{}, err
 	}
-	cmd, err := procReadFile(fsys, dir+"cmdline", make([]byte, procMaxCmdline))
-	if err != nil {
-		return procInfo{}, err
+	command := s.comm
+	if mode != CmdlineOff {
+		cmd, err := procReadFile(fsys, dir+"cmdline", make([]byte, procMaxCmdline))
+		if err != nil {
+			return procInfo{}, err
+		}
+		command = procCommand(cmd, s.comm, mode == CmdlineRedacted)
 	}
 
 	info := procInfo{
 		PID:      s.pid,
 		Name:     s.comm,
-		Command:  procCommand(cmd, s.comm),
+		Command:  command,
 		User:     p.userName(fsys, uid, reloaded),
 		State:    s.state,
 		Threads:  s.threads,
@@ -260,13 +312,116 @@ func (p *processes) details(fsys fs.FS, s procStat, reloaded *bool) (procInfo, e
 }
 
 // procCommand turns the NUL-separated cmdline into one line, falling back to
-// "[comm]" when it is empty.
-func procCommand(cmdline []byte, comm string) string {
-	cmd := strings.TrimSpace(strings.ReplaceAll(string(cmdline), "\x00", " "))
+// "[comm]" when it is empty. With redact the values of secret looking
+// arguments are replaced, see redactArgs.
+func procCommand(cmdline []byte, comm string, redact bool) string {
+	args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+	if redact {
+		redactArgs(args)
+	}
+	cmd := strings.TrimSpace(strings.Join(args, " "))
 	if cmd == "" {
 		return "[" + comm + "]"
 	}
 	return strings.ToValidUTF8(cmd, "�")
+}
+
+// procRedacted replaces a secret.
+const procRedacted = "***"
+
+// procSecretFlags are the flags whose value, given as the next argument, is
+// replaced: "--password <value>". Names are lowercase with the leading
+// dashes dropped and "_" turned into "-"; a flag that ends in "-" and one of
+// them counts too, so "--db-password" and "--github-token" are covered.
+// "--password=<value>" is caught by procSecretKV instead.
+var procSecretFlags = []string{
+	"password", "passwd", "pass", "pwd",
+	"token", "secret", "api-key", "apikey",
+	"access-key", "secret-key", "private-key",
+}
+
+// procPFlagKeep are the arguments starting with "-p" that are well-known
+// compiler flags rather than "-p<password>", so a build keeps its command
+// line readable.
+var procPFlagKeep = map[string]bool{
+	"-pthread": true, "-pipe": true, "-pedantic": true, "-pie": true, "-pg": true,
+}
+
+var (
+	// procSecretKV matches key=value where the key contains pass, token,
+	// secret or key: "--api-key=<value>", "PGPASSWORD=<value>",
+	// "?token=<value>&x=1", "-Djavax.net.ssl.keyStorePassword=<value>".
+	// The value ends at whitespace (for "sh -c" scripts) or at & , ; (query
+	// strings, mount options).
+	procSecretKV = regexp.MustCompile(`(?i)([\w.-]*(?:pass|token|secret|key)[\w.-]*=)[^\s&,;]+`)
+	// procURLUserinfo matches the password in a URL's userinfo:
+	// "postgres://user:<value>@host/db".
+	procURLUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]*:)[^/\s@]*@`)
+)
+
+// redactArgs replaces, in place, the values of command line arguments that
+// commonly carry secrets:
+//
+//   - the argument after a flag in procSecretFlags: --password <value>
+//   - --password=<value>, and any key=value where the key contains pass,
+//     token, secret or key
+//   - -p<password>, as mysql takes it
+//   - the password in a URL: https://user:<value>@example.com
+//
+// It works on what is commonly seen and cannot catch everything, such as a
+// secret passed as a bare argument.
+func redactArgs(args []string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		pValue := procIsPValue(a)
+		if pValue {
+			args[i] = "-p" + procRedacted
+		}
+		// A -p<password> can end like a secret flag ("-pmy-token"). Its
+		// value is already gone, the next argument goes too: hiding one
+		// argument too many is better than showing a secret.
+		if procIsSecretFlag(a) {
+			if i+1 < len(args) && args[i+1] != "" {
+				args[i+1] = procRedacted
+			}
+			i++
+			continue
+		}
+		if pValue {
+			continue
+		}
+		a = procSecretKV.ReplaceAllString(a, "${1}"+procRedacted)
+		args[i] = procURLUserinfo.ReplaceAllString(a, "${1}"+procRedacted+"@")
+	}
+}
+
+// procIsPValue reports whether a is -p<password>, as mysql takes it, and
+// not a compiler flag (procPFlagKeep) or a single dash secret flag such as
+// "-password" or "-pwd".
+func procIsPValue(a string) bool {
+	if len(a) <= 2 || !strings.HasPrefix(a, "-p") || procPFlagKeep[a] {
+		return false
+	}
+	return !slices.Contains(procSecretFlags, strings.ToLower(a[1:]))
+}
+
+// procIsSecretFlag reports whether a is a flag like "--password" or
+// "-db_token" whose value is the next argument. Switches like
+// "--no-password" take no value and are left alone.
+func procIsSecretFlag(a string) bool {
+	if !strings.HasPrefix(a, "-") || strings.Contains(a, "=") {
+		return false
+	}
+	name := strings.ReplaceAll(strings.ToLower(strings.TrimLeft(a, "-")), "_", "-")
+	if strings.HasPrefix(name, "no-") {
+		return false
+	}
+	for _, f := range procSecretFlags {
+		if name == f || strings.HasSuffix(name, "-"+f) {
+			return true
+		}
+	}
+	return false
 }
 
 // userName resolves uid through /etc/passwd. A uid that is not in the cache

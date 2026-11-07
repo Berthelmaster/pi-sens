@@ -73,6 +73,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		"history_retention", fmt.Sprintf("raw %s, 1m %s, 15m %s",
 			cfg.HistoryRawRetention, cfg.History1mRetention, cfg.History15mRetention),
 		"watch_services", strings.Join(cfg.WatchServices, ","),
+		"process_cmdline", cfg.ProcessCmdline,
 	)
 	rulesFrom := "built-in"
 	if cfg.AlertsFile != "" {
@@ -81,6 +82,12 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	logger.Info("alert rules loaded", "rules", len(rules), "from", rulesFrom)
 
 	collectors.SetWatchServices(cfg.WatchServices)
+	cmdline, err := collectors.ParseCmdlineMode(cfg.ProcessCmdline)
+	if err != nil { // config.Load already checked this
+		fmt.Fprintln(stderr, "pisens:", err)
+		return 2
+	}
+	collectors.SetProcessCmdline(cmdline)
 
 	var serverOpts []server.Option
 	if cfg.AuthEnabled() {
