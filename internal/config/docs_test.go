@@ -38,6 +38,7 @@ var settingsWithDefault = []string{
 	EnvNetQuality,
 	EnvNetQualityTargets,
 	EnvNetQualityInterval,
+	EnvNetQualityDNSName,
 	EnvPrometheus,
 }
 

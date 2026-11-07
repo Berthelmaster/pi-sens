@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 
@@ -41,17 +42,20 @@ type NetQualityOptions struct {
 	Targets []string
 	// Interval is the time between two probe rounds.
 	Interval time.Duration
-	// FS is the root filesystem, for proc/net/route.
+	// DNSName is the host name looked up every round to time the DNS
+	// resolver. Empty means no lookups.
+	DNSName string
+	// FS is the root filesystem, for proc/net/route and etc/resolv.conf.
 	FS fs.FS
 	// Logger gets the probe method and why ICMP is not used, once each.
 	Logger *slog.Logger
 }
 
 // StartNetQuality starts probing the default gateway and opts.Targets in a
-// background goroutine, a burst of pings every opts.Interval, for the
-// netquality collector to report. The goroutine stops when ctx is done; the
-// returned channel is closed once it has. Without a call the netquality
-// section is {"available": false}.
+// background goroutine, a burst of pings and a lookup of opts.DNSName every
+// opts.Interval, for the netquality collector to report. The goroutine stops
+// when ctx is done; the returned channel is closed once it has. Without a
+// call the netquality section is {"available": false}.
 func StartNetQuality(ctx context.Context, opts NetQualityOptions) <-chan struct{} {
 	logger := opts.Logger
 	if logger == nil {
@@ -71,6 +75,11 @@ const (
 	netqTimeout = time.Second
 )
 
+// netqDNSTimeout is how long a DNS lookup may take before it counts as
+// failed. It is longer than a ping's: a resolver that has to ask upstream
+// takes a few round trips.
+const netqDNSTimeout = 2 * time.Second
+
 // netqSlowMs is the average round trip time, in milliseconds, above which a
 // target makes the status degraded.
 const netqSlowMs = 150
@@ -88,6 +97,10 @@ const (
 	netqGateway  = "gateway"
 	netqInternet = "internet"
 )
+
+// netqDNSKey is the series key segment of the DNS lookups: netq.dns.lookup_ms.
+// No target gets it.
+const netqDNSKey = "dns"
 
 // TCP ports for the fallback when ICMP is not allowed. Every target answers
 // one of them, if only with a reset: most routers run DNS or a web interface.
@@ -111,6 +124,9 @@ var (
 // internet targets and 53, then 80, for the gateway. A refused connection
 // still took one round trip, so it counts as an answer. Each target reports
 // the method it was measured with.
+//
+// Every round also looks up a host name (see netqNetProber.LookupDNS), as
+// many "slow internet" moments are really a slow or broken DNS resolver.
 type netquality struct {
 	started  atomic.Bool
 	interval atomic.Int64 // time.Duration
@@ -123,6 +139,7 @@ type netqRound struct {
 	at      time.Time
 	status  string
 	targets []netqTargetData
+	dns     *netqDNSData
 	series  map[string]float64
 }
 
@@ -134,6 +151,24 @@ type netqData struct {
 	IntervalS float64          `json:"interval_s,omitempty"`
 	ProbedAt  *time.Time       `json:"probed_at,omitempty"`
 	Targets   []netqTargetData `json:"targets,omitempty"`
+	// DNS is the latest lookup; nil when DNS lookups are off.
+	DNS *netqDNSData `json:"dns,omitempty"`
+}
+
+type netqDNSData struct {
+	// Name is the host name looked up.
+	Name string `json:"name"`
+	// Resolver is the nameserver that was asked, from /etc/resolv.conf,
+	// e.g. "192.168.1.1:53".
+	Resolver string `json:"resolver,omitempty"`
+	// OK is whether the name resolved to an IPv4 address.
+	OK       bool     `json:"ok"`
+	LookupMs *float64 `json:"lookup_ms"`
+	// Failures counts the failed lookups since pisens started.
+	Failures int `json:"failures"`
+	// LastOK is the last round in which the lookup succeeded.
+	LastOK *time.Time `json:"last_ok"`
+	Error  string     `json:"error,omitempty"`
 }
 
 type netqTargetData struct {
@@ -172,15 +207,29 @@ func (n *netquality) Collect(context.Context, *metrics.Env) (metrics.Result, err
 		IntervalS: intervalS,
 		ProbedAt:  &at,
 		Targets:   r.targets,
+		DNS:       r.dns,
 	}
 	return metrics.Result{Data: data, Series: maps.Clone(r.series)}, nil
 }
 
-// netqProber sends the pings of one target.
+// netqProber sends the pings of one target and the DNS lookups.
 type netqProber interface {
 	// Probe sends count pings to host and returns what came back. ports
 	// are the TCP ports to time instead when ICMP is not allowed.
 	Probe(ctx context.Context, host string, count int, ports []int) netqBurst
+	// LookupDNS asks server for the IPv4 address of name and returns how
+	// long the answer took.
+	LookupDNS(ctx context.Context, server netip.AddrPort, name string) netqLookup
+}
+
+// netqLookup is what one LookupDNS got back.
+type netqLookup struct {
+	// Duration is the time from sending the query to the answer; only set
+	// when Err is nil.
+	Duration time.Duration
+	// Err says why the name did not resolve: a timeout, NXDOMAIN, no IPv4
+	// address.
+	Err error
 }
 
 // netqBurst is what one Probe got back.
@@ -210,7 +259,7 @@ type netqTarget struct {
 // netqTargets returns the gateway followed by the internet targets, each
 // with a series key segment of its own.
 func netqTargets(hosts []string) []netqTarget {
-	taken := map[string]bool{netqGateway: true}
+	taken := map[string]bool{netqGateway: true, netqDNSKey: true}
 	targets := []netqTarget{{name: netqGateway, key: netqGateway, kind: netqGateway, ports: netqGatewayPorts}}
 	for _, h := range hosts {
 		key := seriesName(h, collapseSeparators)
@@ -240,7 +289,7 @@ func (n *netquality) start(ctx context.Context, opts NetQualityOptions, p netqPr
 		ticker := time.NewTicker(opts.Interval)
 		defer ticker.Stop()
 		for {
-			n.round(ctx, opts.FS, targets, p, time.Now)
+			n.round(ctx, opts.FS, targets, opts.DNSName, p, time.Now)
 			select {
 			case <-ctx.Done():
 				return
@@ -251,9 +300,19 @@ func (n *netquality) start(ctx context.Context, opts NetQualityOptions, p netqPr
 	return done
 }
 
-// round probes every target at once and stores the result.
-func (n *netquality) round(ctx context.Context, fsys fs.FS, targets []netqTarget, p netqProber, now func() time.Time) {
+// round probes every target and looks up dnsName, unless it is empty, all
+// at once, and stores the result.
+func (n *netquality) round(ctx context.Context, fsys fs.FS, targets []netqTarget, dnsName string, p netqProber, now func() time.Time) {
 	gateway, gwErr := defaultGateway(fsys)
+	var (
+		resolver netip.AddrPort
+		lookup   netqLookup
+		nsErr    error
+	)
+	if dnsName != "" {
+		resolver, nsErr = netqNameserver(fsys)
+		lookup.Err = nsErr
+	}
 
 	bursts := make([]netqBurst, len(targets))
 	var wg sync.WaitGroup
@@ -272,6 +331,13 @@ func (n *netquality) round(ctx context.Context, fsys fs.FS, targets []netqTarget
 			bursts[i] = p.Probe(ctx, host, netqCount, t.ports)
 		}()
 	}
+	if dnsName != "" && nsErr == nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lookup = p.LookupDNS(ctx, resolver, dnsName)
+		}()
+	}
 	wg.Wait()
 	if ctx.Err() != nil {
 		// Shutting down: the pings were cut short, not lost.
@@ -280,7 +346,8 @@ func (n *netquality) round(ctx context.Context, fsys fs.FS, targets []netqTarget
 
 	at := now().UTC()
 	prev := map[string]*time.Time{}
-	if last := n.latest.Load(); last != nil {
+	last := n.latest.Load()
+	if last != nil {
 		for _, t := range last.targets {
 			prev[t.Key] = t.LastOK
 		}
@@ -313,7 +380,27 @@ func (n *netquality) round(ctx context.Context, fsys fs.FS, targets []netqTarget
 		}
 		r.series["netq."+t.key+".loss_pct"] = loss
 	}
-	r.status = netqStatus(r.targets)
+	if dnsName != "" {
+		d := &netqDNSData{Name: dnsName, OK: lookup.Err == nil}
+		if last != nil && last.dns != nil {
+			d.Failures, d.LastOK = last.dns.Failures, last.dns.LastOK
+		}
+		if resolver.IsValid() {
+			d.Resolver = resolver.String()
+		}
+		if d.OK {
+			ms := netqRound3(netqMs(lookup.Duration))
+			d.LookupMs = &ms
+			d.LastOK = &at
+			r.series["netq."+netqDNSKey+".lookup_ms"] = ms
+		} else {
+			d.Failures++
+			d.Error = lookup.Err.Error()
+		}
+		r.series["netq."+netqDNSKey+".failures"] = float64(d.Failures)
+		r.dns = d
+	}
+	r.status = netqStatus(r.targets, r.dns)
 	n.latest.Store(r)
 }
 
@@ -350,10 +437,11 @@ func netqSummarise(b netqBurst) (latencyMs, jitterMs *float64, lossPct float64) 
 
 // netqStatus is down when every internet target lost every ping (or, with
 // no internet targets, the gateway did), degraded when any target lost a
-// ping or averaged over netqSlowMs, and good otherwise.
-func netqStatus(targets []netqTargetData) string {
+// ping or averaged over netqSlowMs or the DNS lookup failed, and good
+// otherwise. dns is nil when there was no lookup.
+func netqStatus(targets []netqTargetData, dns *netqDNSData) string {
+	degraded := dns != nil && !dns.OK
 	internet, internetDown := 0, 0
-	degraded := false
 	for _, t := range targets {
 		if t.LossPct > 0 || (t.LatencyMs != nil && *t.LatencyMs > netqSlowMs) {
 			degraded = true
@@ -459,6 +547,30 @@ func netqHexAddr(s string) (netip.Addr, error) {
 	return netip.AddrFrom4(a), nil
 }
 
+// netqNameserver returns the first nameserver in /etc/resolv.conf, on port
+// 53, which is the one the system resolver asks first. Without a nameserver
+// line glibc and Go ask 127.0.0.1, so this does too.
+func netqNameserver(fsys fs.FS) (netip.AddrPort, error) {
+	data, err := fs.ReadFile(fsys, "etc/resolv.conf")
+	if err != nil {
+		return netip.AddrPort{}, err
+	}
+	s := bufio.NewScanner(bytes.NewReader(data))
+	for s.Scan() {
+		f := strings.Fields(s.Text())
+		if len(f) < 2 || f[0] != "nameserver" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(f[1]); err == nil {
+			return netip.AddrPortFrom(addr.Unmap(), 53), nil
+		}
+	}
+	if err := s.Err(); err != nil {
+		return netip.AddrPort{}, err
+	}
+	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), 53), nil
+}
+
 // netqNetProber is the real prober.
 type netqNetProber struct {
 	logger *slog.Logger
@@ -469,6 +581,7 @@ type netqNetProber struct {
 	dial       func(ctx context.Context, network, addr string) (net.Conn, error)
 	spacing    time.Duration
 	timeout    time.Duration
+	dnsTimeout time.Duration
 
 	// icmpDenied is set once the kernel refuses ICMP sockets; from then on
 	// only TCP is used.
@@ -495,6 +608,7 @@ func newNetqNetProber(logger *slog.Logger) *netqNetProber {
 		dial:       d.DialContext,
 		spacing:    netqSpacing,
 		timeout:    netqTimeout,
+		dnsTimeout: netqDNSTimeout,
 	}
 }
 
@@ -630,4 +744,126 @@ func netqSleep(ctx context.Context, d time.Duration) bool {
 	case <-t.C:
 		return true
 	}
+}
+
+// LookupDNS sends one query for the A records of name to server over UDP
+// and times the answer. The name is looked up as it is, without the search
+// domains from resolv.conf, and nothing is cached on this side: every call
+// sends a query. The resolver itself may answer from its cache, which is
+// what every other program on the Pi gets too.
+//
+// The lookup fails when no answer comes within p.dnsTimeout, when the
+// answer is an error such as NXDOMAIN or SERVFAIL, or when it holds no IPv4
+// address. Replies that do not match the query (another ID or question) are
+// ignored.
+func (p *netqNetProber) LookupDNS(ctx context.Context, server netip.AddrPort, name string) netqLookup {
+	if !strings.HasSuffix(name, ".") {
+		name += "."
+	}
+	qname, err := dnsmessage.NewName(name)
+	if err != nil {
+		return netqLookup{Err: err}
+	}
+	question := dnsmessage.Question{Name: qname, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}
+	id := uint16(rand.Uint32())
+	query, err := (&dnsmessage.Message{
+		Header:    dnsmessage.Header{ID: id, RecursionDesired: true},
+		Questions: []dnsmessage.Question{question},
+	}).Pack()
+	if err != nil {
+		return netqLookup{Err: err}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, p.dnsTimeout)
+	defer cancel()
+	conn, err := p.dial(ctx, "udp", server.String())
+	if err != nil {
+		return netqLookup{Err: err}
+	}
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
+	defer stop()
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return netqLookup{Err: err}
+		}
+	}
+
+	start := time.Now()
+	if _, err := conn.Write(query); err != nil {
+		return netqLookup{Err: netqDNSErr(err, server, p.dnsTimeout)}
+	}
+	buf := make([]byte, 1500)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return netqLookup{Err: netqDNSErr(err, server, p.dnsTimeout)}
+		}
+		elapsed := time.Since(start)
+		var msg dnsmessage.Parser
+		h, err := msg.Start(buf[:n])
+		if err != nil || !h.Response || h.ID != id {
+			continue
+		}
+		// Names are case-insensitive, and some resolvers change the case.
+		q, err := msg.Question()
+		if err != nil || q.Type != question.Type || q.Class != question.Class ||
+			!strings.EqualFold(q.Name.String(), question.Name.String()) {
+			continue
+		}
+		if h.RCode != dnsmessage.RCodeSuccess {
+			return netqLookup{Err: fmt.Errorf("%s: %s", strings.TrimSuffix(name, "."), netqRCode(h.RCode))}
+		}
+		if h.Truncated {
+			// The answer did not fit in UDP; the resolver did answer, and
+			// a client would get the rest over TCP.
+			return netqLookup{Duration: elapsed}
+		}
+		if err := msg.SkipAllQuestions(); err != nil {
+			return netqLookup{Err: fmt.Errorf("bad answer from %s: %w", server, err)}
+		}
+		for {
+			ah, err := msg.AnswerHeader()
+			if errors.Is(err, dnsmessage.ErrSectionDone) {
+				break
+			}
+			if err != nil {
+				return netqLookup{Err: fmt.Errorf("bad answer from %s: %w", server, err)}
+			}
+			if ah.Type == dnsmessage.TypeA {
+				return netqLookup{Duration: elapsed}
+			}
+			if err := msg.SkipAnswer(); err != nil {
+				return netqLookup{Err: fmt.Errorf("bad answer from %s: %w", server, err)}
+			}
+		}
+		return netqLookup{Err: fmt.Errorf("%s has no IPv4 address", strings.TrimSuffix(name, "."))}
+	}
+}
+
+// netqDNSErr turns a timeout into "no answer from ... within ...", which says
+// more than "i/o timeout".
+func netqDNSErr(err error, server netip.AddrPort, timeout time.Duration) error {
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return fmt.Errorf("no answer from %s within %s", server, timeout)
+	}
+	return err
+}
+
+// netqRCode names an error response code the way dig does.
+func netqRCode(rc dnsmessage.RCode) string {
+	switch rc {
+	case dnsmessage.RCodeNameError:
+		return "NXDOMAIN"
+	case dnsmessage.RCodeServerFailure:
+		return "SERVFAIL"
+	case dnsmessage.RCodeRefused:
+		return "REFUSED"
+	case dnsmessage.RCodeFormatError:
+		return "FORMERR"
+	case dnsmessage.RCodeNotImplemented:
+		return "NOTIMP"
+	}
+	return fmt.Sprintf("rcode %d", rc)
 }

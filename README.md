@@ -82,6 +82,7 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--netq`                  | `PISENS_NETQ`                  | `on`              | Measure [network quality](#network-quality) by pinging the gateway and internet hosts; `off` turns it off |
 | `--netq-targets`          | `PISENS_NETQ_TARGETS`          | `1.1.1.1,8.8.8.8` | Comma separated internet hosts to ping besides the default gateway, IPv4 addresses or host names; `--netq-targets=` pings only the gateway |
 | `--netq-interval`         | `PISENS_NETQ_INTERVAL`         | `10s`             | Time between two rounds of network quality pings |
+| `--netq-dns-name`         | `PISENS_NETQ_DNS_NAME`         | `example.com`     | Host name to look up every network quality round to time the [DNS resolver](#dns); `--netq-dns-name=` skips the lookups |
 | `--prometheus`            | `PISENS_PROMETHEUS`            | `true`            | Serve [Prometheus metrics](#prometheus) at `/metrics`; `--prometheus=false` turns it off |
 | `--auth-user`             | `PISENS_AUTH_USER`             | (none)            | User name for HTTP basic auth, see [Authentication](#authentication) |
 | `--auth-password-hash`    | `PISENS_AUTH_PASSWORD_HASH`    | (none)            | bcrypt hash of the basic auth password, from `pisens hash-password` |
@@ -141,16 +142,27 @@ The `netquality` section shows when the network or the internet was flaky. Every
      "latency_ms": 0.63, "jitter_ms": 0.12, "loss_pct": 0, "last_ok": "2026-11-07T20:22:54Z"},
     {"name": "1.1.1.1", "key": "1_1_1_1", "kind": "internet", "address": "1.1.1.1", "method": "icmp",
      "latency_ms": 19.31, "jitter_ms": 3.69, "loss_pct": 0, "last_ok": "2026-11-07T20:22:54Z"}
-  ]
+  ],
+  "dns": {"name": "example.com", "resolver": "192.168.1.1:53", "ok": true, "lookup_ms": 14.82,
+          "failures": 0, "last_ok": "2026-11-07T20:22:54Z"}
 }
 ```
 
 - `latency_ms` is the average round trip time of the answered pings and `jitter_ms` the average difference between two consecutive ones; both are `null` when too few came back. `loss_pct` is the share of the 5 pings that got no answer.
 - `last_ok` is the last round in which the target answered at all. `error` says why nothing came back when that is known, such as `no default route` or a host name that did not resolve.
-- `status` is `down` when every internet target lost every ping, `degraded` when any target lost a ping or averaged over 150 ms, and `good` otherwise. It is `pending` until the first round is done.
+- `status` is `down` when every internet target lost every ping, `degraded` when any target lost a ping or averaged over 150 ms or the DNS lookup failed, and `good` otherwise. It is `pending` until the first round is done.
 - The series are `netq.<key>.latency_ms` (left out when nothing answered) and `netq.<key>.loss_pct`, so `netq.gateway.loss_pct` and `netq.1_1_1_1.latency_ms` go to the history and to Prometheus like any other.
 
 The pings are unprivileged ICMP echo requests, which Linux allows for the groups in the `net.ipv4.ping_group_range` sysctl. systemd opens that range to every group, so the service needs no extra capabilities. Where the kernel refuses them, pisens logs it once and times a TCP connect instead: port 443 for internet targets, and 53 then 80 for the gateway. A refused connection still took one round trip, so it counts as an answer. `method` says which one a target was measured with (`icmp` or `tcp`). Only IPv4 is probed. `--netq=off` (or `PISENS_NETQ=off`) stops the pings, and the section is then `{"available": false}`.
+
+#### DNS
+
+Many "the internet is slow" moments are really DNS, so every round also looks up `--netq-dns-name` (default `example.com`), at the same time as the pings. pisens reads the first `nameserver` from `/etc/resolv.conf` every round (127.0.0.1 when there is none, as glibc does), sends it one A query over UDP port 53 and times the answer. The name is looked up as written, without the `search` domains. Nothing is cached on the pisens side, so every round sends a real query; the resolver may answer from its own cache, as it would for any other program on the Pi. When `resolv.conf` points at a local caching resolver (systemd-resolved's `127.0.0.53`, dnsmasq), `lookup_ms` is mostly that cache.
+
+- `ok` is whether the name resolved to an IPv4 address. A lookup fails when no answer comes within 2 seconds, when the answer is an error (`NXDOMAIN`, `SERVFAIL`, `REFUSED` and so on, shown in `error`), or when it holds no IPv4 address.
+- `lookup_ms` is the time from the query to the answer, `null` when the lookup failed. `resolver` is the nameserver that was asked, `last_ok` the last round the lookup worked and `failures` the failed lookups since pisens started.
+- A failed lookup makes `status` `degraded` even when every ping comes back.
+- The series are `netq.dns.lookup_ms` (left out when the lookup failed) and `netq.dns.failures`. No target gets the key `dns`; a target with that name becomes `dns_2`.
 
 ### History
 

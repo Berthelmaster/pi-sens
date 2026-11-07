@@ -138,6 +138,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		netqDone = collectors.StartNetQuality(ctx, collectors.NetQualityOptions{
 			Targets:  cfg.NetQualityTargets,
 			Interval: cfg.NetQualityInterval,
+			DNSName:  cfg.NetQualityDNSName,
 			FS:       os.DirFS("/"),
 			Logger:   logger,
 		})
@@ -148,7 +149,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	}
 	logger.Info("network quality", "enabled", cfg.NetQuality,
 		"targets", strings.Join(append([]string{"gateway"}, cfg.NetQualityTargets...), ","),
-		"interval", cfg.NetQualityInterval.String())
+		"interval", cfg.NetQualityInterval.String(), "dns_name", cfg.NetQualityDNSName)
 
 	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
 

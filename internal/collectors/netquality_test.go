@@ -11,11 +11,14 @@ import (
 	"net/netip"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
+	"testing/fstest"
 	"time"
 
+	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 
@@ -23,7 +26,8 @@ import (
 )
 
 // None of these tests send a packet: the rounds use fakeNetqProber, and the
-// real prober is tested with a fake ICMP socket and dialer.
+// real prober is tested with a fake ICMP socket and dialer, and a fake DNS
+// server over net.Pipe.
 
 var netqT0 = time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 
@@ -146,25 +150,33 @@ func TestNetqStatus(t *testing.T) {
 	inet := func(loss float64, latency *float64) netqTargetData {
 		return netqTargetData{Kind: netqInternet, LossPct: loss, LatencyMs: latency}
 	}
+	dnsOK := &netqDNSData{OK: true, LookupMs: netqF(12)}
+	dnsFailed := &netqDNSData{OK: false, Error: "example.com: NXDOMAIN"}
 	tests := []struct {
 		name    string
 		targets []netqTargetData
+		dns     *netqDNSData
 		want    string
 	}{
-		{"all fine", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(12)), inet(0, netqF(15))}, netqGood},
-		{"one lost ping", []netqTargetData{gw(0, netqF(1)), inet(20, netqF(12)), inet(0, netqF(15))}, netqDegraded},
-		{"gateway lost pings", []netqTargetData{gw(40, netqF(1)), inet(0, netqF(12)), inet(0, netqF(15))}, netqDegraded},
-		{"slow", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(netqSlowMs+1)), inet(0, netqF(15))}, netqDegraded},
-		{"just under slow", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(netqSlowMs)), inet(0, netqF(15))}, netqGood},
-		{"one internet target down", []netqTargetData{gw(0, netqF(1)), inet(100, nil), inet(0, netqF(15))}, netqDegraded},
-		{"all internet targets down", []netqTargetData{gw(0, netqF(1)), inet(100, nil), inet(100, nil)}, netqDown},
-		{"everything down", []netqTargetData{gw(100, nil), inet(100, nil), inet(100, nil)}, netqDown},
-		{"only the gateway, up", []netqTargetData{gw(0, netqF(1))}, netqGood},
-		{"only the gateway, down", []netqTargetData{gw(100, nil)}, netqDown},
+		{"all fine", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(12)), inet(0, netqF(15))}, dnsOK, netqGood},
+		{"only DNS fails", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(12)), inet(0, netqF(15))}, dnsFailed, netqDegraded},
+		{"DNS fails, only the gateway", []netqTargetData{gw(0, netqF(1))}, dnsFailed, netqDegraded},
+		{"DNS fails and the internet is down", []netqTargetData{gw(0, netqF(1)), inet(100, nil), inet(100, nil)}, dnsFailed, netqDown},
+		{"DNS fine, a lost ping", []netqTargetData{gw(0, netqF(1)), inet(20, netqF(12)), inet(0, netqF(15))}, dnsOK, netqDegraded},
+		{"no DNS lookups", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(12)), inet(0, netqF(15))}, nil, netqGood},
+		{"one lost ping", []netqTargetData{gw(0, netqF(1)), inet(20, netqF(12)), inet(0, netqF(15))}, nil, netqDegraded},
+		{"gateway lost pings", []netqTargetData{gw(40, netqF(1)), inet(0, netqF(12)), inet(0, netqF(15))}, nil, netqDegraded},
+		{"slow", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(netqSlowMs+1)), inet(0, netqF(15))}, nil, netqDegraded},
+		{"just under slow", []netqTargetData{gw(0, netqF(1)), inet(0, netqF(netqSlowMs)), inet(0, netqF(15))}, nil, netqGood},
+		{"one internet target down", []netqTargetData{gw(0, netqF(1)), inet(100, nil), inet(0, netqF(15))}, nil, netqDegraded},
+		{"all internet targets down", []netqTargetData{gw(0, netqF(1)), inet(100, nil), inet(100, nil)}, nil, netqDown},
+		{"everything down", []netqTargetData{gw(100, nil), inet(100, nil), inet(100, nil)}, nil, netqDown},
+		{"only the gateway, up", []netqTargetData{gw(0, netqF(1))}, nil, netqGood},
+		{"only the gateway, down", []netqTargetData{gw(100, nil)}, nil, netqDown},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := netqStatus(tt.targets); got != tt.want {
+			if got := netqStatus(tt.targets, tt.dns); got != tt.want {
 				t.Errorf("status = %q, want %q", got, tt.want)
 			}
 		})
@@ -172,12 +184,12 @@ func TestNetqStatus(t *testing.T) {
 }
 
 func TestNetqTargets(t *testing.T) {
-	got := netqTargets([]string{"1.1.1.1", "8.8.8.8", "Gateway", "one.one.one.one", "1-1-1-1", "---"})
+	got := netqTargets([]string{"1.1.1.1", "8.8.8.8", "Gateway", "one.one.one.one", "1-1-1-1", "---", "DNS"})
 	var keys []string
 	for _, tg := range got {
 		keys = append(keys, tg.key)
 	}
-	want := []string{"gateway", "1_1_1_1", "8_8_8_8", "gateway_2", "one_one_one_one", "1_1_1_1_2", "target"}
+	want := []string{"gateway", "1_1_1_1", "8_8_8_8", "gateway_2", "one_one_one_one", "1_1_1_1_2", "target", "dns_2"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %q, want %q", keys, want)
 	}
@@ -190,11 +202,14 @@ func TestNetqTargets(t *testing.T) {
 }
 
 // fakeNetqProber answers Probe from a table of bursts by host. Hosts that are
-// not in it lose every ping.
+// not in it lose every ping. LookupDNS returns lookup.
 type fakeNetqProber struct {
 	mu     sync.Mutex
 	bursts map[string]netqBurst
 	calls  []string
+	lookup netqLookup
+	// lookups are the DNS lookups, as "server name".
+	lookups []string
 	// probed gets a value after every Probe, if set.
 	probed chan string
 }
@@ -217,6 +232,13 @@ func (f *fakeNetqProber) Probe(_ context.Context, host string, count int, ports 
 		f.probed <- host
 	}
 	return b
+}
+
+func (f *fakeNetqProber) LookupDNS(_ context.Context, server netip.AddrPort, name string) netqLookup {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookups = append(f.lookups, server.String()+" "+name)
+	return f.lookup
 }
 
 func newFakeNetqProber() *fakeNetqProber {
@@ -261,7 +283,7 @@ func TestNetqRound(t *testing.T) {
 
 	now := netqT0
 	clock := func() time.Time { return now }
-	n.round(context.Background(), fsys, targets, p, clock)
+	n.round(context.Background(), fsys, targets, "", p, clock)
 
 	data, series := netqCollectData(t, n)
 	if data.Status != netqDegraded {
@@ -302,7 +324,7 @@ func TestNetqRound(t *testing.T) {
 	now = netqT0.Add(10 * time.Second)
 	p.set("1.1.1.1", netqBurst{Addr: netip.MustParseAddr("1.1.1.1"), Method: "icmp", Sent: 5})
 	p.set("8.8.8.8", netqBurst{Addr: netip.MustParseAddr("8.8.8.8"), Method: "tcp", Sent: 5, Err: errors.New("i/o timeout")})
-	n.round(context.Background(), fsys, targets, p, clock)
+	n.round(context.Background(), fsys, targets, "", p, clock)
 
 	data, series = netqCollectData(t, n)
 	if data.Status != netqDown {
@@ -338,7 +360,7 @@ func TestNetqRoundWithoutDefaultRoute(t *testing.T) {
 	n.started.Store(true)
 	p := newFakeNetqProber()
 	p.set("1.1.1.1", netqAnswered("1.1.1.1", "icmp", 10, 10, 10, 10, 10))
-	n.round(context.Background(), os.DirFS("testdata/netquality/nodefault"), netqTargets([]string{"1.1.1.1"}), p, func() time.Time { return netqT0 })
+	n.round(context.Background(), os.DirFS("testdata/netquality/nodefault"), netqTargets([]string{"1.1.1.1"}), "", p, func() time.Time { return netqT0 })
 
 	if !reflect.DeepEqual(p.calls, []string{"1.1.1.1"}) {
 		t.Errorf("probed %q, want only 1.1.1.1", p.calls)
@@ -431,6 +453,7 @@ func testNetqNetProber() *netqNetProber {
 	}
 	p.spacing = 0
 	p.timeout = 50 * time.Millisecond
+	p.dnsTimeout = 50 * time.Millisecond
 	p.listenICMP = func() (net.PacketConn, error) { panic("unexpected ICMP socket") }
 	p.dial = func(context.Context, string, string) (net.Conn, error) { panic("unexpected TCP connect") }
 	return p
@@ -577,5 +600,322 @@ func TestNetqProberICMP(t *testing.T) {
 	}
 	if !conn.closed {
 		t.Error("the ICMP socket was not closed")
+	}
+}
+
+func TestNetqNameserver(t *testing.T) {
+	// The first nameserver line that is not commented out.
+	got, err := netqNameserver(os.DirFS("testdata/netquality/pi5"))
+	if err != nil || got.String() != "192.168.1.1:53" {
+		t.Errorf("pi5 nameserver = %v, %v; want 192.168.1.1:53", got, err)
+	}
+	// Without a nameserver line the resolver asks localhost.
+	got, err = netqNameserver(os.DirFS("testdata/netquality/nodefault"))
+	if err != nil || got.String() != "127.0.0.1:53" {
+		t.Errorf("nameserver without one = %v, %v; want 127.0.0.1:53", got, err)
+	}
+	got, err = netqNameserver(fstest.MapFS{"etc/resolv.conf": {Data: []byte("nameserver fe80::1%wlan0\nnameserver 1.1.1.1\n")}})
+	if err != nil || got.String() != "[fe80::1%wlan0]:53" {
+		t.Errorf("IPv6 nameserver = %v, %v; want [fe80::1%%wlan0]:53", got, err)
+	}
+	if _, err := netqNameserver(os.DirFS("testdata/netquality/missing")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("without the file: err = %v, want not exist", err)
+	}
+}
+
+// TestNetqRoundDNS checks the dns section, its series and the failure count
+// over three rounds: a good lookup, NXDOMAIN while every ping is answered,
+// and a timeout.
+func TestNetqRoundDNS(t *testing.T) {
+	n := &netquality{}
+	n.started.Store(true)
+	targets := netqTargets([]string{"1.1.1.1"})
+	fsys := os.DirFS("testdata/netquality/pi5")
+	p := newFakeNetqProber()
+	p.set("192.168.1.1", netqAnswered("192.168.1.1", "icmp", 1, 1, 1, 1, 1))
+	p.set("1.1.1.1", netqAnswered("1.1.1.1", "icmp", 10, 10, 10, 10, 10))
+	p.lookup = netqLookup{Duration: netqDur(12.3456)}
+	now := netqT0
+	clock := func() time.Time { return now }
+
+	n.round(context.Background(), fsys, targets, "example.com", p, clock)
+	data, series := netqCollectData(t, n)
+	if !reflect.DeepEqual(p.lookups, []string{"192.168.1.1:53 example.com"}) {
+		t.Errorf("lookups = %q, want example.com from 192.168.1.1:53", p.lookups)
+	}
+	want := &netqDNSData{Name: "example.com", Resolver: "192.168.1.1:53", OK: true, LookupMs: netqF(12.346), LastOK: &netqT0}
+	if !reflect.DeepEqual(data.DNS, want) {
+		t.Errorf("dns = %+v, want %+v", data.DNS, want)
+	}
+	if data.Status != netqGood {
+		t.Errorf("status = %q, want good", data.Status)
+	}
+	if series["netq.dns.lookup_ms"] != 12.346 || series["netq.dns.failures"] != 0 {
+		t.Errorf("series = %v, want netq.dns.lookup_ms 12.346 and netq.dns.failures 0", series)
+	}
+
+	// NXDOMAIN fails the lookup and makes the status degraded, though
+	// every ping came back.
+	now = netqT0.Add(10 * time.Second)
+	p.lookup = netqLookup{Err: errors.New("example.com: NXDOMAIN")}
+	n.round(context.Background(), fsys, targets, "example.com", p, clock)
+	data, series = netqCollectData(t, n)
+	want = &netqDNSData{Name: "example.com", Resolver: "192.168.1.1:53", Failures: 1, LastOK: &netqT0, Error: "example.com: NXDOMAIN"}
+	if !reflect.DeepEqual(data.DNS, want) {
+		t.Errorf("dns = %+v, want %+v", data.DNS, want)
+	}
+	if data.Status != netqDegraded {
+		t.Errorf("status = %q, want degraded when only DNS fails", data.Status)
+	}
+	if _, ok := series["netq.dns.lookup_ms"]; ok || series["netq.dns.failures"] != 1 {
+		t.Errorf("series = %v, want no netq.dns.lookup_ms and netq.dns.failures 1", series)
+	}
+	for _, tg := range data.Targets {
+		if tg.LossPct != 0 {
+			t.Errorf("%s loss = %v, want 0", tg.Name, tg.LossPct)
+		}
+	}
+
+	// A timeout counts too.
+	now = netqT0.Add(20 * time.Second)
+	p.lookup = netqLookup{Err: errors.New("no answer from 192.168.1.1:53 within 2s")}
+	n.round(context.Background(), fsys, targets, "example.com", p, clock)
+	data, series = netqCollectData(t, n)
+	if data.DNS.Failures != 2 || series["netq.dns.failures"] != 2 || data.DNS.OK {
+		t.Errorf("dns = %+v, series = %v; want 2 failures", data.DNS, series)
+	}
+	if data.Status != netqDegraded {
+		t.Errorf("status = %q, want degraded", data.Status)
+	}
+
+	// The next good lookup keeps the count.
+	now = netqT0.Add(30 * time.Second)
+	p.lookup = netqLookup{Duration: netqDur(8)}
+	n.round(context.Background(), fsys, targets, "example.com", p, clock)
+	data, series = netqCollectData(t, n)
+	if !data.DNS.OK || data.DNS.Failures != 2 || data.DNS.Error != "" || !data.DNS.LastOK.Equal(now) || data.Status != netqGood {
+		t.Errorf("dns = %+v, status %q; want ok with 2 failures and last_ok %v, status good", data.DNS, data.Status, now)
+	}
+	if series["netq.dns.lookup_ms"] != 8 || series["netq.dns.failures"] != 2 {
+		t.Errorf("series = %v", series)
+	}
+}
+
+func TestNetqRoundDNSOff(t *testing.T) {
+	n := &netquality{}
+	n.started.Store(true)
+	p := newFakeNetqProber()
+	p.set("192.168.1.1", netqAnswered("192.168.1.1", "icmp", 1, 1, 1, 1, 1))
+	n.round(context.Background(), os.DirFS("testdata/netquality/pi5"), netqTargets(nil), "", p, func() time.Time { return netqT0 })
+	data, series := netqCollectData(t, n)
+	if data.DNS != nil || len(p.lookups) != 0 {
+		t.Errorf("dns = %+v, lookups %q; want neither", data.DNS, p.lookups)
+	}
+	for k := range series {
+		if strings.HasPrefix(k, "netq.dns.") {
+			t.Errorf("series %s without DNS lookups", k)
+		}
+	}
+}
+
+func TestNetqRoundDNSWithoutResolvConf(t *testing.T) {
+	n := &netquality{}
+	n.started.Store(true)
+	p := newFakeNetqProber()
+	fsys := fstest.MapFS{"proc/net/route": {Data: []byte("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n" +
+		"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\n")}}
+	p.set("192.168.1.1", netqAnswered("192.168.1.1", "icmp", 1, 1, 1, 1, 1))
+	n.round(context.Background(), fsys, netqTargets(nil), "example.com", p, func() time.Time { return netqT0 })
+	data, series := netqCollectData(t, n)
+	if len(p.lookups) != 0 {
+		t.Errorf("lookups = %q, want none without a resolver", p.lookups)
+	}
+	if data.DNS == nil || data.DNS.OK || data.DNS.Resolver != "" || data.DNS.Failures != 1 || data.DNS.Error == "" {
+		t.Errorf("dns = %+v, want a failure with the error and no resolver", data.DNS)
+	}
+	if series["netq.dns.failures"] != 1 || data.Status != netqDegraded {
+		t.Errorf("series = %v, status %q; want 1 failure, degraded", series, data.Status)
+	}
+}
+
+// fakeDNSServer is the far end of a UDP socket to a nameserver, over
+// net.Pipe so no packet is sent. It reads one query, waits delay, then
+// writes what reply returns for it; with nothing to write it stays silent
+// until the client gives up.
+type fakeDNSServer struct {
+	t      *testing.T
+	delay  time.Duration
+	reply  func(q dnsmessage.Message) []dnsmessage.Message
+	mu     sync.Mutex
+	dialed []string
+	query  dnsmessage.Message
+}
+
+func (s *fakeDNSServer) dial(_ context.Context, network, addr string) (net.Conn, error) {
+	s.mu.Lock()
+	s.dialed = append(s.dialed, network+" "+addr)
+	s.mu.Unlock()
+	client, server := net.Pipe()
+	go func() {
+		defer server.Close()
+		buf := make([]byte, 1500)
+		n, err := server.Read(buf)
+		if err != nil {
+			return
+		}
+		var q dnsmessage.Message
+		if err := q.Unpack(buf[:n]); err != nil {
+			s.t.Errorf("bad query: %v", err)
+			return
+		}
+		s.mu.Lock()
+		s.query = q
+		s.mu.Unlock()
+		time.Sleep(s.delay)
+		for _, r := range s.reply(q) {
+			b, err := r.Pack()
+			if err != nil {
+				s.t.Errorf("pack reply: %v", err)
+				return
+			}
+			if _, err := server.Write(b); err != nil {
+				return
+			}
+		}
+		// Wait for the client to close its end.
+		_, _ = server.Read(buf)
+	}()
+	return client, nil
+}
+
+func dnsReply(q dnsmessage.Message, rcode dnsmessage.RCode, answers ...dnsmessage.Resource) dnsmessage.Message {
+	return dnsmessage.Message{
+		Header:    dnsmessage.Header{ID: q.ID, Response: true, RecursionAvailable: true, RCode: rcode},
+		Questions: q.Questions,
+		Answers:   answers,
+	}
+}
+
+func dnsA(q dnsmessage.Message, a [4]byte) dnsmessage.Resource {
+	return dnsmessage.Resource{
+		Header: dnsmessage.ResourceHeader{Name: q.Questions[0].Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 300},
+		Body:   &dnsmessage.AResource{A: a},
+	}
+}
+
+var netqResolver = netip.MustParseAddrPort("192.168.1.1:53")
+
+func TestNetqLookupDNS(t *testing.T) {
+	p := testNetqNetProber()
+	p.dnsTimeout = time.Second
+	srv := &fakeDNSServer{t: t, delay: 30 * time.Millisecond, reply: func(q dnsmessage.Message) []dnsmessage.Message {
+		// A late answer to an earlier query and one for another name come
+		// first; both are ignored.
+		stale := dnsReply(q, dnsmessage.RCodeNameError)
+		stale.ID++
+		other := dnsReply(q, dnsmessage.RCodeSuccess)
+		other.Questions = []dnsmessage.Question{{Name: dnsmessage.MustNewName("example.org."), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}}
+		// The CNAME before the A record is what a resolver sends for an
+		// alias.
+		cname := dnsmessage.Resource{
+			Header: dnsmessage.ResourceHeader{Name: q.Questions[0].Name, Type: dnsmessage.TypeCNAME, Class: dnsmessage.ClassINET, TTL: 300},
+			Body:   &dnsmessage.CNAMEResource{CNAME: dnsmessage.MustNewName("edge.example.net.")},
+		}
+		return []dnsmessage.Message{stale, other, dnsReply(q, dnsmessage.RCodeSuccess, cname, dnsA(q, [4]byte{93, 184, 215, 14}))}
+	}}
+	p.dial = srv.dial
+
+	start := time.Now()
+	l := p.LookupDNS(context.Background(), netqResolver, "example.com")
+	took := time.Since(start)
+	if l.Err != nil {
+		t.Fatalf("lookup failed: %v", l.Err)
+	}
+	if l.Duration < srv.delay || l.Duration > took {
+		t.Errorf("duration = %v, want between the server's delay %v and the call's %v", l.Duration, srv.delay, took)
+	}
+	if !reflect.DeepEqual(srv.dialed, []string{"udp 192.168.1.1:53"}) {
+		t.Errorf("dialed %q, want udp 192.168.1.1:53", srv.dialed)
+	}
+	q := srv.query
+	if len(q.Questions) != 1 || q.Questions[0].Name.String() != "example.com." || q.Questions[0].Type != dnsmessage.TypeA ||
+		q.Questions[0].Class != dnsmessage.ClassINET || !q.RecursionDesired || q.Response {
+		t.Errorf("query = %+v, want a recursive A query for example.com.", q)
+	}
+
+	// Every lookup sends a query of its own.
+	srv.delay = 0
+	if l := p.LookupDNS(context.Background(), netqResolver, "EXAMPLE.com."); l.Err != nil {
+		t.Errorf("second lookup failed: %v", l.Err)
+	}
+	if len(srv.dialed) != 2 {
+		t.Errorf("dialed %d times, want 2", len(srv.dialed))
+	}
+}
+
+func TestNetqLookupDNSFailures(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply func(q dnsmessage.Message) []dnsmessage.Message
+		want  string
+	}{
+		{
+			name:  "timeout",
+			reply: func(dnsmessage.Message) []dnsmessage.Message { return nil },
+			want:  "no answer from 192.168.1.1:53 within 50ms",
+		},
+		{
+			name: "NXDOMAIN",
+			reply: func(q dnsmessage.Message) []dnsmessage.Message {
+				return []dnsmessage.Message{dnsReply(q, dnsmessage.RCodeNameError)}
+			},
+			want: "example.com: NXDOMAIN",
+		},
+		{
+			name: "SERVFAIL",
+			reply: func(q dnsmessage.Message) []dnsmessage.Message {
+				return []dnsmessage.Message{dnsReply(q, dnsmessage.RCodeServerFailure)}
+			},
+			want: "example.com: SERVFAIL",
+		},
+		{
+			name: "no IPv4 address",
+			reply: func(q dnsmessage.Message) []dnsmessage.Message {
+				return []dnsmessage.Message{dnsReply(q, dnsmessage.RCodeSuccess)}
+			},
+			want: "example.com has no IPv4 address",
+		},
+		{
+			name: "only wrong answers",
+			reply: func(q dnsmessage.Message) []dnsmessage.Message {
+				r := dnsReply(q, dnsmessage.RCodeSuccess, dnsA(q, [4]byte{6, 6, 6, 6}))
+				r.ID++
+				return []dnsmessage.Message{r}
+			},
+			want: "no answer from 192.168.1.1:53 within 50ms",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := testNetqNetProber()
+			srv := &fakeDNSServer{t: t, reply: tt.reply}
+			p.dial = srv.dial
+			l := p.LookupDNS(context.Background(), netqResolver, "example.com")
+			if l.Err == nil || l.Err.Error() != tt.want {
+				t.Errorf("err = %v, want %q", l.Err, tt.want)
+			}
+			if l.Duration != 0 {
+				t.Errorf("duration = %v, want 0 for a failure", l.Duration)
+			}
+		})
+	}
+}
+
+func TestNetqLookupDNSDialError(t *testing.T) {
+	p := testNetqNetProber()
+	unreachable := &net.OpError{Op: "dial", Net: "udp", Err: os.NewSyscallError("connect", syscall.ENETUNREACH)}
+	p.dial = func(context.Context, string, string) (net.Conn, error) { return nil, unreachable }
+	if l := p.LookupDNS(context.Background(), netqResolver, "example.com"); !errors.Is(l.Err, syscall.ENETUNREACH) {
+		t.Errorf("err = %v, want network unreachable", l.Err)
 	}
 }
