@@ -100,11 +100,11 @@ The database stops growing once every table holds its full retention, because fr
 
 | Table         | Rows per series | Size per series |
 |---------------|-----------------|-----------------|
-| `samples_raw` | 43,200          | ~1.2 MB         |
+| `samples_raw` | 43,200          | ~1.0 MB         |
 | `samples_1m`  | 10,080          | ~0.45 MB        |
 | `samples_15m` | 8,640           | ~0.4 MB         |
 
-The rollup sizes were measured with 50 series of random values. The raw figure is worked out from the same row layout (about 27 bytes a row against 45 for a rollup row). A Pi 5 has around 50 series (more with extra disks, mounts or network interfaces), which comes to roughly 100 MB, plus a WAL file of a few MB. Raw samples are the biggest part, so `--history-raw-retention` or a longer `--interval` is the knob to turn on a small SD card. Size scales linearly with each table's retention.
+All three were measured with 50 series of random values, about 22 bytes a raw row against 45 for a rollup row. Series whose values are whole numbers take a little less, because SQLite stores those as integers. `PISENS_MEASURE_DB=1 go test -run TestMeasureRawSize -v ./internal/history` reruns the raw measurement: it writes 24 hours of samples the way pisens does, keeps the downsampler running for a few more hours and reads the table size from `dbstat`. A Pi 5 has around 50 series (more with extra disks, mounts or network interfaces), which comes to roughly 90 MB, plus a WAL file of a few MB. Raw samples are the biggest part, so `--history-raw-retention` or a longer `--interval` is the knob to turn on a small SD card. Size scales linearly with each table's retention.
 
 pisens does not run `PRAGMA incremental_vacuum`. With steady deletes and inserts the free pages are reused within minutes, so returning them to the filesystem would only make SQLite grow the file again, which costs SD card writes for nothing. It would also need `auto_vacuum=INCREMENTAL`, which an existing database only gets from a full `VACUUM`. If you lower a retention a lot and want the space back, stop pisens and run `sqlite3 data/pisens.db VACUUM`.
 
