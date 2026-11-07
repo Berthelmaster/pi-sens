@@ -389,7 +389,7 @@ sudo -u pisens vcgencmd get_throttled
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request to `main`:
 
 - Frontend: `npm ci`, `npm run check` and `npm run build` in `web/`
-- Go: `go vet`, `golangci-lint` and `go test -race ./...`
+- Go: `go vet`, `golangci-lint` and `go test -race` on every package outside `web/node_modules` (`make -s go-packages` prints the list)
 - Shell scripts: `shellcheck deploy/*.sh`
 - A static `linux/arm64` build with the frontend embedded, uploaded as the `pisens-linux-arm64` artifact on the run page
 
