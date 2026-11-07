@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
@@ -392,6 +394,110 @@ func TestServicesUnavailable(t *testing.T) {
 				t.Errorf("logged %d lines, want 1:\n%s", n, logs)
 			}
 		})
+	}
+}
+
+// errServicesBus is what systemctl prints while the system D-Bus is down.
+var errServicesBus = errors.New("systemctl: exit status 1: " +
+	"Failed to connect to bus: No such file or directory")
+
+// servicesSystemdFS is the root of a machine booted with systemd.
+var servicesSystemdFS = fstest.MapFS{"run/systemd/system": {Mode: fs.ModeDir}}
+
+func TestServicesBusErrorOnSystemdHostIsRetried(t *testing.T) {
+	logs := captureLog(t)
+	runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
+		servicesJSONCmd:  {Err: errServicesBus},
+		servicesPlainCmd: {Err: errServicesBus},
+	}}
+	s := &services{}
+	env := func(offset time.Duration) *metrics.Env {
+		e := servicesEnv(runner, offset)
+		e.FS = servicesSystemdFS
+		return e
+	}
+	if _, err := s.Collect(context.Background(), env(0)); err == nil || !strings.Contains(err.Error(), "Failed to connect to bus") {
+		t.Fatalf("Collect() error = %v, want the bus error", err)
+	}
+	runs := len(runner.Calls())
+	// The error is repeated until the next run is due...
+	if _, err := s.Collect(context.Background(), env(10*time.Second)); err == nil {
+		t.Fatal("Collect() error = nil on a cached sample, want the bus error")
+	}
+	if n := len(runner.Calls()); n != runs {
+		t.Errorf("systemctl ran again within 30s: %v", runner.Calls())
+	}
+
+	// ...and once D-Bus is back, the next run 30 s later recovers.
+	runner.Responses = map[string]metrics.FakeResponse{
+		servicesJSONCmd: {Output: servicesFixture(t, "list-units.json")},
+	}
+	res, err := s.Collect(context.Background(), env(30*time.Second))
+	if err != nil {
+		t.Fatalf("Collect() after the bus came back error = %v", err)
+	}
+	if n := len(runner.Calls()); n == runs {
+		t.Errorf("systemctl was not retried after 30s: %v", runner.Calls())
+	}
+	if d, ok := res.Data.(servicesData); !ok || !d.Available || d.Failed != 2 {
+		t.Errorf("Data = %+v, want the services from list-units.json", res.Data)
+	}
+	if res.Series["services.failed"] != 2 {
+		t.Errorf("Series = %v, want services.failed 2", res.Series)
+	}
+	if logs.Len() != 0 {
+		t.Errorf("logged %q, want nothing (the sampler logs collector errors)", logs)
+	}
+}
+
+func TestServicesBusErrorWithoutSystemdIsUnavailable(t *testing.T) {
+	tests := map[string]fs.FS{
+		"no run/systemd/system":      fstest.MapFS{"run/lock": {Mode: fs.ModeDir}},
+		"run/systemd/system is file": fstest.MapFS{"run/systemd/system": {Data: []byte("x")}},
+		"no filesystem":              nil,
+	}
+	for name, fsys := range tests {
+		t.Run(name, func(t *testing.T) {
+			captureLog(t)
+			runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
+				servicesJSONCmd: {Err: errServicesBus},
+			}}
+			s := &services{}
+			for i := 0; i < 3; i++ {
+				e := servicesEnv(runner, time.Duration(i)*time.Minute)
+				e.FS = fsys
+				res, err := s.Collect(context.Background(), e)
+				if err != nil {
+					t.Fatalf("Collect() #%d error = %v, want an unavailable section", i+1, err)
+				}
+				if _, ok := res.Data.(servicesUnavailable); !ok {
+					t.Errorf("Data = %+v, want the unavailable section", res.Data)
+				}
+			}
+			if calls := runner.Calls(); len(calls) != 1 {
+				t.Errorf("ran %v, want systemctl to be tried once", calls)
+			}
+		})
+	}
+}
+
+func TestServicesNotBootedWithSystemdIsUnavailableOnAnyHost(t *testing.T) {
+	// systemctl's own verdict wins over /run/systemd/system, e.g. in a
+	// container that has the host's /run mounted.
+	captureLog(t)
+	runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
+		servicesJSONCmd: {Err: errors.New("systemctl: exit status 1: " +
+			"System has not been booted with systemd as init system (PID 1). Can't operate.\n" +
+			"Failed to connect to bus: Host is down")},
+	}}
+	e := servicesEnv(runner, 0)
+	e.FS = servicesSystemdFS
+	res, err := (&services{}).Collect(context.Background(), e)
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	if _, ok := res.Data.(servicesUnavailable); !ok {
+		t.Errorf("Data = %+v, want the unavailable section", res.Data)
 	}
 }
 

@@ -366,3 +366,116 @@ func BenchmarkProcessesLive(b *testing.B) {
 		collectProc(b, p, fsys, prev, now)
 	}
 }
+
+// procTestSecret stands in for a secret in the redaction tests. It is only
+// ever joined to a flag in code, so secret scanners do not mistake a test
+// case for a leaked credential.
+const procTestSecret = "dummy-value"
+
+func TestRedactCommand(t *testing.T) {
+	const v = procTestSecret
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"nothing secret", []string{"/usr/local/bin/pisens", "--listen", ":8080"}, "/usr/local/bin/pisens --listen :8080"},
+		{"password flag value", []string{"app", "--password", v, "-v"}, "app --password *** -v"},
+		{"password flag equals", []string{"app", "--password=" + v, "-v"}, "app --password=*** -v"},
+		{"token flag value", []string{"app", "--token", v}, "app --token ***"},
+		{"token flag equals", []string{"app", "--token=" + v}, "app --token=***"},
+		{"api key flag value", []string{"app", "--api-key", v}, "app --api-key ***"},
+		{"api key flag equals", []string{"app", "--api-key=" + v}, "app --api-key=***"},
+		{"api_key flag value", []string{"app", "--api_key", v}, "app --api_key ***"},
+		{"secret flag value", []string{"app", "--secret", v}, "app --secret ***"},
+		{"secret flag equals", []string{"app", "--secret=" + v}, "app --secret=***"},
+		{"single dash flag value", []string{"app", "-password", v}, "app -password ***"},
+		{"upper case flag value", []string{"app", "--PASSWORD", v}, "app --PASSWORD ***"},
+		{"prefixed flag value", []string{"app", "--db-password", v, "--github-token", v},
+			"app --db-password *** --github-token ***"},
+		{"prefixed flag equals", []string{"app", "--client-secret=" + v}, "app --client-secret=***"},
+		{"secret flag last", []string{"app", "--token"}, "app --token"},
+		{"switch without value", []string{"psql", "--no-password", "-h", "db"}, "psql --no-password -h db"},
+		{"file flag kept", []string{"app", "--token-file", "/etc/app/token"}, "app --token-file /etc/app/token"},
+		{"mysql -p", []string{"mysql", "-uroot", "-p" + v, "shop"}, "mysql -uroot -p*** shop"},
+		{"mysql -p ending like a flag", []string{"mysql", "-pmy-token", "shop"}, "mysql -p*** ***"},
+		{"single dash -pwd flag", []string{"app", "-pwd", v}, "app -pwd ***"},
+		{"-p alone", []string{"ssh", "-p", "2222", "pi@host"}, "ssh -p 2222 pi@host"},
+		{"compiler -p flags", []string{"cc", "-pthread", "-pipe", "-O2", "x.c"}, "cc -pthread -pipe -O2 x.c"},
+		{"env assignment", []string{"sh", "-c", "PGPASSWORD=" + v + " pg_dump shop"}, "sh -c PGPASSWORD=*** pg_dump shop"},
+		{"java property", []string{"java", "-Djavax.net.ssl.keyStorePassword=" + v, "-jar", "app.jar"},
+			"java -Djavax.net.ssl.keyStorePassword=*** -jar app.jar"},
+		{"query string", []string{"curl", "https://api.example.com/v1?apikey=" + v + "&page=2"},
+			"curl https://api.example.com/v1?apikey=***&page=2"},
+		{"mount options", []string{"mount", "-o", "username=pi,password=" + v + ",vers=3", "//nas/share"},
+			"mount -o username=pi,password=***,vers=3 //nas/share"},
+		{"other key=value kept", []string{"app", "--mode=fast", "level=3"}, "app --mode=fast level=3"},
+		{"empty value", []string{"app", "--password="}, "app --password="},
+		{"url userinfo", []string{"app", "postgres://shop:" + v + "@db:5432/shop"}, "app postgres://shop:***@db:5432/shop"},
+		{"url userinfo in flag", []string{"app", "--db=mysql://root:" + v + "@localhost/x"}, "app --db=mysql://root:***@localhost/x"},
+		{"url user only", []string{"git", "clone", "https://pi@example.com/repo.git"}, "git clone https://pi@example.com/repo.git"},
+		{"url without userinfo", []string{"curl", "http://localhost:8080/api"}, "curl http://localhost:8080/api"},
+		{"ssh target kept", []string{"scp", "f", "pi@host:/tmp"}, "scp f pi@host:/tmp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmdline := []byte(strings.Join(tt.argv, "\x00") + "\x00")
+			if got := procCommand(cmdline, "comm", true); got != tt.want {
+				t.Errorf("redacted = %q, want %q", got, tt.want)
+			}
+			if got, full := procCommand(cmdline, "comm", false), strings.Join(tt.argv, " "); got != full {
+				t.Errorf("full = %q, want %q", got, full)
+			}
+		})
+	}
+}
+
+func TestProcessesCmdlineMode(t *testing.T) {
+	fsys := procFS([]fakeProc{{pid: 10, comm: "app", rssPages: 1, startTime: 1}})
+	fsys["proc/10/cmdline"] = &fstest.MapFile{Data: []byte("/usr/bin/app\x00--token\x00" + procTestSecret + "\x00")}
+
+	for _, tt := range []struct {
+		mode string
+		want string
+	}{
+		{"redacted", "/usr/bin/app --token ***"},
+		{"full", "/usr/bin/app --token " + procTestSecret},
+		{"off", "app"},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			m, err := ParseCmdlineMode(tt.mode)
+			if err != nil {
+				t.Fatalf("ParseCmdlineMode(%q) error = %v", tt.mode, err)
+			}
+			p := &processes{}
+			p.cmdline.Store(int32(m))
+			d := collectProc(t, p, fsys, time.Time{}, procT0)
+			if got := d.Processes[0]; got.Command != tt.want || got.Name != "app" {
+				t.Errorf("name %q command %q, want name \"app\" command %q", got.Name, got.Command, tt.want)
+			}
+		})
+	}
+
+	// off does not even read the command line.
+	delete(fsys, "proc/10/cmdline")
+	p := &processes{}
+	p.cmdline.Store(int32(CmdlineOff))
+	if d := collectProc(t, p, fsys, time.Time{}, procT0); len(d.Processes) != 1 {
+		t.Errorf("off without a cmdline file: got %d processes, want 1", len(d.Processes))
+	}
+
+	if _, err := ParseCmdlineMode("partial"); err == nil {
+		t.Error("ParseCmdlineMode(\"partial\") error = nil, want an error")
+	}
+	if (&processes{}).cmdline.Load() != int32(CmdlineRedacted) {
+		t.Error("the default mode is not redacted")
+	}
+}
+
+func TestSetProcessCmdline(t *testing.T) {
+	defer SetProcessCmdline(CmdlineRedacted)
+	SetProcessCmdline(CmdlineFull)
+	if got := CmdlineMode(processesCollector.cmdline.Load()); got != CmdlineFull {
+		t.Errorf("mode = %d after SetProcessCmdline(CmdlineFull), want %d", got, CmdlineFull)
+	}
+}

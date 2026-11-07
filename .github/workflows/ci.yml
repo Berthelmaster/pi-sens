@@ -56,13 +56,22 @@ jobs:
             go.mod
             go.sum
 
-      - run: go vet ./...
+      # ./... would walk into web/node_modules, so vet, lint and test take the
+      # package list from the Makefile, which leaves it out.
+      - name: List packages
+        run: |
+          pkgs=$(make -s go-packages)
+          test -n "$pkgs"
+          echo "GOPKGS=${pkgs}" >>"$GITHUB_ENV"
+
+      - run: go vet $GOPKGS
 
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.15.0
+          args: ${{ env.GOPKGS }}
 
-      - run: go test -race ./...
+      - run: go test -race $GOPKGS
 
   shellcheck:
     name: Shell scripts

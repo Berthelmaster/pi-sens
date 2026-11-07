@@ -74,11 +74,20 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--notify-ntfy`           | `PISENS_NOTIFY_NTFY`           | (none)            | ntfy topic URL for alert notifications                    |
 | `--notify-cooldown`       | `PISENS_NOTIFY_COOLDOWN`       | `15m`             | Per-alert notification cooldown, `0` for none             |
 | `--watch-services`        | `PISENS_WATCH_SERVICES`        | (none)            | Comma separated systemd services to report the state of, e.g. `ssh,pisens` |
+| `--process-cmdline`       | `PISENS_PROCESS_CMDLINE`       | `redacted`        | How much of the top processes' command lines to show: `off`, `redacted` or `full`, see [Process command lines](#process-command-lines) |
 | `--prometheus`            | `PISENS_PROMETHEUS`            | `true`            | Serve [Prometheus metrics](#prometheus) at `/metrics`; `--prometheus=false` turns it off |
 | `--auth-user`             | `PISENS_AUTH_USER`             | (none)            | User name for HTTP basic auth, see [Authentication](#authentication) |
 | `--auth-password-hash`    | `PISENS_AUTH_PASSWORD_HASH`    | (none)            | bcrypt hash of the basic auth password, from `pisens hash-password` |
 
 Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT or SIGTERM.
+
+#### Process command lines
+
+The `processes` section lists the full command line of each top process, and command lines often carry secrets such as database passwords or API tokens. Since the API is open to anyone on the network unless [authentication](#authentication) is on, `--process-cmdline` decides how much of them is shown:
+
+- `redacted` (the default) replaces the values of arguments that commonly hold secrets with `***`: the argument after `--password`, `--token`, `--api-key` or `--secret` (also with one dash, `_` instead of `-` or a prefix such as `--db-password`), `-p<password>` as mysql takes it, any `key=value` whose key contains `pass`, `token`, `secret` or `key` (`--password=<value>`, `PGPASSWORD=<value>`, `?apikey=<value>`), and the password in a URL (`postgres://user:***@db/shop`). It catches the common forms, not every secret: a password passed as a bare argument is still shown.
+- `off` shows only the process name; the command line is not read at all.
+- `full` shows the command line unchanged.
 
 ### History
 
@@ -440,7 +449,7 @@ To go back to the previous binary by hand, run `sudo /usr/local/sbin/pisens-depl
 GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request to `main`:
 
 - Frontend: `npm ci`, `npm run check` and `npm run build` in `web/`
-- Go: `go vet`, `golangci-lint` and `go test -race ./...`
+- Go: `go vet`, `golangci-lint` and `go test -race` on every package outside `web/node_modules` (`make -s go-packages` prints the list)
 - Shell scripts: `shellcheck` on `deploy/`, and the `deploy/deploy.sh` tests (`deploy/tests/`) with stub `systemctl` and `curl`
 - A static `linux/arm64` build with the frontend embedded, uploaded as the `pisens-linux-arm64` artifact on the run page
 

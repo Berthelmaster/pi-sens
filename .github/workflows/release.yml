@@ -78,7 +78,7 @@ jobs:
             go.mod
             go.sum
 
-      - run: go test ./...
+      - run: go test $(make -s go-packages)
 
       - uses: actions/download-artifact@v8
         with:

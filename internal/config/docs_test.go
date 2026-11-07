@@ -33,6 +33,7 @@ var settingsWithDefault = []string{
 	EnvHistory1mRetention,
 	EnvHistory15mRetention,
 	EnvNotifyCooldown,
+	EnvProcessCmdline,
 	EnvPrometheus,
 }
 

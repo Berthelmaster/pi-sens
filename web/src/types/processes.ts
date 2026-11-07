@@ -20,7 +20,9 @@ export interface ProcessInfo {
   name: string
   /**
    * Full command line, cut at 1 KiB. Kernel threads and zombies show their
-   * name in brackets: "[kworker/0:1]".
+   * name in brackets: "[kworker/0:1]". By default the values of secret
+   * looking arguments are replaced by "***"; with --process-cmdline=off it
+   * is just the name.
    */
   command: string
   /** User name of the real uid, or the uid as a number string. */

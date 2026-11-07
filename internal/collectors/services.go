@@ -46,7 +46,9 @@ func SetWatchServices(names []string) {
 //
 // Without systemctl, or without a running systemd (a container, a chroot), the
 // section is {"available": false} with no series. That is logged once and
-// systemctl is not run again.
+// systemctl is not run again. Failing to reach the bus only counts as that on
+// a machine not booted with systemd; on a systemd host it is an ordinary
+// error, such as while D-Bus restarts, and systemctl is tried again 30 s later.
 type services struct {
 	mu    sync.Mutex
 	watch []string
@@ -54,6 +56,7 @@ type services struct {
 	// Only touched by Collect, which the sampler never runs concurrently.
 	unavailable     bool
 	jsonUnsupported bool
+	booted          *bool // nil until systemdBooted has checked
 	lastRun         time.Time
 	last            metrics.Result
 	lastErr         error
@@ -212,7 +215,7 @@ func (s *services) run(ctx context.Context, env *metrics.Env, args []string) ([]
 	if ctx.Err() != nil {
 		return nil, err
 	}
-	if servicesMissing(err, out) {
+	if servicesMissing(err, out, s.systemdBooted(env)) {
 		slog.Default().Warn("systemctl is not usable, service status is unavailable", "err", err.Error())
 		return nil, errServicesUnavailable
 	}
@@ -306,18 +309,44 @@ func servicesParseShow(out []byte, names []string) ([]servicesUnit, error) {
 	return units, nil
 }
 
+// systemdBooted reports whether the machine was booted with systemd, the way
+// sd_booted(3) tells: /run/systemd/system is a directory. It is checked once.
+// Without a filesystem to look at, the answer is no.
+func (s *services) systemdBooted(env *metrics.Env) bool {
+	if s.booted == nil {
+		booted := false
+		if env.FS != nil {
+			fi, err := fs.Stat(env.FS, "run/systemd/system")
+			booted = err == nil && fi.IsDir()
+		}
+		s.booted = &booted
+	}
+	return *s.booted
+}
+
 // servicesMissing reports whether a failed systemctl run means it cannot be
 // used at all: the binary is missing, or there is no systemd to talk to.
-func servicesMissing(err error, out []byte) bool {
+// Failing to connect to the bus only means that when the machine was not
+// booted with systemd; on a systemd host D-Bus may just be restarting.
+func servicesMissing(err error, out []byte, booted bool) bool {
 	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
 		return true
 	}
 	msg := strings.ToLower(err.Error() + " " + string(out))
 	for _, s := range []string{
 		"not been booted with systemd", // PID 1 is not systemd
-		"failed to connect to bus",     // no D-Bus / systemd socket
-		"failed to connect to system scope bus",
 		"running in chroot",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	if booted {
+		return false
+	}
+	for _, s := range []string{
+		"failed to connect to bus", // no D-Bus / systemd socket
+		"failed to connect to system scope bus",
 	} {
 		if strings.Contains(msg, s) {
 			return true

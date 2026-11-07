@@ -3,7 +3,10 @@ package history
 import (
 	"context"
 	"fmt"
+	"math"
+	"math/rand/v2"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 )
@@ -269,9 +272,145 @@ func TestSeriesKeys(t *testing.T) {
 	}
 }
 
-// BenchmarkQuery30Days reads 30 days of 10 series from a database holding
-// the default 7 days of minute and 90 days of quarter rollups for 50 series.
-func BenchmarkQuery30Days(b *testing.B) {
+// oldQueries are the queries that grouped rows in SQL before Query folded
+// them in Go, by table. ?1 is the series key, ?2 <= ts < ?3 the range and ?4
+// the bucket size.
+var oldQueries = map[Resolution]string{
+	ResolutionRaw: `
+		SELECT r.ts - r.ts % ?4 AS b, AVG(r.value), MIN(r.value), MAX(r.value)
+		FROM series s CROSS JOIN samples_raw r
+		WHERE s.key = ?1 AND r.series_id = s.id AND r.ts >= ?2 AND r.ts < ?3
+		GROUP BY b ORDER BY b`,
+	ResolutionMinute:  oldRollupQuery("samples_1m"),
+	ResolutionQuarter: oldRollupQuery("samples_15m"),
+}
+
+func oldRollupQuery(table string) string {
+	return fmt.Sprintf(`
+		SELECT r.ts - r.ts %% ?4 AS b, SUM(r.avg * r.n) / SUM(r.n), MIN(r.min), MAX(r.max)
+		FROM series s CROSS JOIN %s r
+		WHERE s.key = ?1 AND r.series_id = s.id AND r.ts >= ?2 AND r.ts < ?3
+		GROUP BY b ORDER BY b`, table)
+}
+
+func TestQueryMatchesSQLGrouping(t *testing.T) {
+	s := openTest(t, t.TempDir())
+	rng := rand.New(rand.NewPCG(1, 2))
+	// Values of very different sizes and signs, with repeats, so float
+	// rounding, the order of the sum and ties in min and max all show.
+	value := func() float64 {
+		if rng.IntN(4) == 0 {
+			return float64(rng.IntN(5) - 2)
+		}
+		return rng.NormFloat64() * math.Pow(10, float64(rng.IntN(16)-6))
+	}
+	end := q0.Unix()
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for id, key := range []string{"a", "b"} {
+		if _, err := tx.Exec("INSERT INTO series (id, key) VALUES (?, ?)", id+1, key); err != nil {
+			t.Fatal(err)
+		}
+		// Rows with random gaps over a little more than each table's range.
+		for _, tbl := range []struct {
+			name       string
+			step, span int64
+		}{{"samples_raw", 1, 7 * 3600}, {"samples_1m", 60, 8 * 86_400}, {"samples_15m", 900, 40 * 86_400}} {
+			for ts := floorTo(end-tbl.span, tbl.step); ts < end; ts += tbl.step * int64(1+rng.IntN(3)) {
+				if tbl.name == "samples_raw" {
+					_, err = tx.Exec("INSERT INTO samples_raw (series_id, ts, value) VALUES (?, ?, ?)", id+1, ts, value())
+				} else {
+					lo, hi := value(), value()
+					_, err = tx.Exec(fmt.Sprintf("INSERT INTO %s (series_id, ts, avg, min, max, n) VALUES (?, ?, ?, ?, ?, ?)", tbl.name),
+						id+1, ts, value(), min(lo, hi), max(lo, hi), 1+rng.IntN(1000))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	spans := []int64{60, 3600, 6 * 3600, 6*3600 + 1, 86_400, 7 * 86_400, 7*86_400 + 1, 30 * 86_400}
+	seen := map[Resolution]int{}
+	for i := range 200 {
+		span := spans[i%len(spans)]
+		if i >= len(spans) {
+			span = 1 + rng.Int64N(span)
+		}
+		to := end - rng.Int64N(3600)
+		from := to - span
+		points := 2 + rng.IntN(1000)
+		q := Query{Keys: []string{"a", "b"}, From: time.Unix(from, 0), To: time.Unix(to, 0), Points: points}
+		res, err := s.Query(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[res.Resolution]++
+		for _, key := range q.Keys {
+			want := oldQuery(t, s, res.Resolution, key, from, to, res.Step)
+			if got := res.Series[key]; !sameSeries(got, want) {
+				t.Fatalf("Query(%s, [%d, %d), %d points) = %s step %d\n got %+v\nwant %+v",
+					key, from, to, points, res.Resolution, res.Step, got, want)
+			}
+			if len(want.T) == 0 {
+				t.Fatalf("Query(%s, [%d, %d)) found no rows, the test data misses the range", key, from, to)
+			}
+		}
+	}
+	for _, r := range []Resolution{ResolutionRaw, ResolutionMinute, ResolutionQuarter} {
+		if seen[r] == 0 {
+			t.Errorf("no query read %s", r)
+		}
+	}
+}
+
+// sameSeries reports whether a and b hold the same points, comparing floats
+// bit for bit.
+func sameSeries(a, b *Series) bool {
+	same := func(x, y []float64) bool {
+		return slices.EqualFunc(x, y, func(u, v float64) bool { return math.Float64bits(u) == math.Float64bits(v) })
+	}
+	return slices.Equal(a.T, b.T) && same(a.Avg, b.Avg) && same(a.Min, b.Min) && same(a.Max, b.Max)
+}
+
+// oldQuery groups the rows of key in [from, to) in SQL, the way Query did
+// before.
+func oldQuery(t *testing.T, s *Store, r Resolution, key string, from, to, step int64) *Series {
+	t.Helper()
+	rows, err := s.db.Query(oldQueries[r], key, from, to, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	ser := &Series{T: []int64{}, Avg: []float64{}, Min: []float64{}, Max: []float64{}}
+	for rows.Next() {
+		var b int64
+		var avg, lo, hi float64
+		if err := rows.Scan(&b, &avg, &lo, &hi); err != nil {
+			t.Fatal(err)
+		}
+		ser.T = append(ser.T, b)
+		ser.Avg = append(ser.Avg, avg)
+		ser.Min = append(ser.Min, lo)
+		ser.Max = append(ser.Max, hi)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return ser
+}
+
+// BenchmarkQuery reads 10 series over the longest range of each table from
+// a database holding the default retention for 50 series: a day of raw
+// samples every 2s, 7 days of minute and 90 days of quarter rollups.
+func BenchmarkQuery(b *testing.B) {
 	s, err := Open(context.Background(), b.TempDir())
 	if err != nil {
 		b.Fatal(err)
@@ -279,21 +418,46 @@ func BenchmarkQuery30Days(b *testing.B) {
 	defer s.Close()
 	end := q0.Unix()
 	seedRollups(b, s, 50, end)
+	seedRaw(b, s, end, 2, 24*3600)
 
 	keys := make([]string, 10)
 	for i := range keys {
 		keys[i] = fmt.Sprintf("series.%02d", i*5)
 	}
-	q := Query{Keys: keys, From: time.Unix(end-30*86_400, 0), To: time.Unix(end, 0), Points: 500}
-	b.ResetTimer()
-	for range b.N {
-		res, err := s.Query(context.Background(), q)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if n := len(res.Series[keys[0]].T); n < 400 {
-			b.Fatalf("got %d points", n)
-		}
+	for _, bb := range []struct {
+		name string
+		span time.Duration
+		want Resolution
+	}{
+		{"6h", RawUpTo, ResolutionRaw},
+		{"7d", MinuteUpTo, ResolutionMinute},
+		{"30d", 30 * 24 * time.Hour, ResolutionQuarter},
+	} {
+		b.Run(bb.name, func(b *testing.B) {
+			q := Query{Keys: keys, From: time.Unix(end-seconds(bb.span), 0), To: time.Unix(end, 0), Points: 500}
+			for range b.N {
+				res, err := s.Query(context.Background(), q)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if n := len(res.Series[keys[0]].T); res.Resolution != bb.want || n < 400 {
+					b.Fatalf("got %s with %d points", res.Resolution, n)
+				}
+			}
+		})
+	}
+}
+
+// seedRaw fills samples_raw of every series with a sample every step
+// seconds for span seconds up to end.
+func seedRaw(tb testing.TB, s *Store, end, step, span int64) {
+	tb.Helper()
+	_, err := s.db.Exec(`WITH RECURSIVE k(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM k WHERE i + 1 < ?3)
+		INSERT INTO samples_raw (series_id, ts, value)
+		SELECT s.id, ?1 - (k.i + 1) * ?2, abs(random() % 10000) / 100.0
+		FROM series s CROSS JOIN k`, end, step, span/step)
+	if err != nil {
+		tb.Fatal(err)
 	}
 }
 

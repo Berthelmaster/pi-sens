@@ -32,6 +32,20 @@ const (
 	DefaultHistory15mRetention = 90 * 24 * time.Hour
 
 	DefaultNotifyCooldown = 15 * time.Minute
+
+	DefaultProcessCmdline = ProcessCmdlineRedacted
+)
+
+// ProcessCmdline values: how much of the process command lines the
+// processes collector reports.
+const (
+	// ProcessCmdlineOff reports only the process name.
+	ProcessCmdlineOff = "off"
+	// ProcessCmdlineRedacted reports the command line with values that look
+	// like secrets replaced.
+	ProcessCmdlineRedacted = "redacted"
+	// ProcessCmdlineFull reports the command line as it is.
+	ProcessCmdlineFull = "full"
 )
 
 // Environment variable names.
@@ -52,6 +66,7 @@ const (
 	EnvNotifyNtfy     = "PISENS_NOTIFY_NTFY"
 	EnvNotifyCooldown = "PISENS_NOTIFY_COOLDOWN"
 	EnvWatchServices  = "PISENS_WATCH_SERVICES"
+	EnvProcessCmdline = "PISENS_PROCESS_CMDLINE"
 
 	EnvPrometheus       = "PISENS_PROMETHEUS"
 	EnvAuthUser         = "PISENS_AUTH_USER"
@@ -90,6 +105,10 @@ type Config struct {
 	// WatchServices are the systemd units whose state is reported on every
 	// sample, e.g. ["ssh", "pisens.service"]. Empty means none.
 	WatchServices []string
+	// ProcessCmdline is how much of each top process's command line the
+	// snapshot shows: ProcessCmdlineOff, ProcessCmdlineRedacted or
+	// ProcessCmdlineFull.
+	ProcessCmdline string
 	// Prometheus turns on GET /metrics in the Prometheus text format.
 	Prometheus bool
 	// AuthUser and AuthPasswordHash turn on HTTP basic auth for every route
@@ -127,6 +146,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		History15mRetention: DefaultHistory15mRetention,
 
 		NotifyCooldown: DefaultNotifyCooldown,
+
+		ProcessCmdline: DefaultProcessCmdline,
 
 		Prometheus: true,
 	}
@@ -166,6 +187,9 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	cfg.AlertsFile = getenv(EnvAlerts)
 	cfg.NotifyWebhook = getenv(EnvNotifyWebhook)
 	cfg.NotifyNtfy = getenv(EnvNotifyNtfy)
+	if v := getenv(EnvProcessCmdline); v != "" {
+		cfg.ProcessCmdline = v
+	}
 	if v := getenv(EnvPrometheus); v != "" {
 		parsed, err := strconv.ParseBool(v)
 		if err != nil {
@@ -208,6 +232,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"shortest time between two notifications that the same alert fires, 0 for none (env "+EnvNotifyCooldown+")")
 	fs.StringVar(&watch, "watch-services", watch,
 		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
+	fs.StringVar(&cfg.ProcessCmdline, "process-cmdline", cfg.ProcessCmdline,
+		"how much of the top processes' command lines to show: off (name only), redacted (secrets hidden) or full (env "+EnvProcessCmdline+")")
 	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
 		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
 	fs.StringVar(&cfg.AuthUser, "auth-user", cfg.AuthUser,
@@ -292,6 +318,11 @@ func (c Config) validate() error {
 		if err := auth.Validate(c.AuthUser, c.AuthPasswordHash); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	switch c.ProcessCmdline {
+	case ProcessCmdlineOff, ProcessCmdlineRedacted, ProcessCmdlineFull:
+	default:
+		errs = append(errs, fmt.Errorf("process command line must be off, redacted or full, got %q", c.ProcessCmdline))
 	}
 	for _, name := range c.WatchServices {
 		if strings.ContainsAny(name, " \t/") {
