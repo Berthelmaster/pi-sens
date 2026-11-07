@@ -381,7 +381,7 @@ func TestDefaultRulesFire(t *testing.T) {
 		"cpu-temp-high@1m0s",
 		"disk-full@0s",
 		"memory-high@2m0s",
-		"services-failed@0s",
+		"services-failed@1m0s",
 		"throttled@30s",
 		"undervoltage@0s",
 	}

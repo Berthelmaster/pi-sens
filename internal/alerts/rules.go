@@ -102,7 +102,7 @@ func DefaultRules() []Rule {
 		{Name: "throttled", Series: "pi.throttled", Op: OpAbove, Threshold: 0, For: 30 * time.Second, Severity: SeverityWarning},
 		{Name: "disk-full", Series: "fs.*.used_pct", Op: OpAbove, Threshold: 90, Severity: SeverityWarning},
 		{Name: "memory-high", Series: "mem.used_pct", Op: OpAbove, Threshold: 90, For: 2 * time.Minute, Severity: SeverityWarning},
-		{Name: "services-failed", Series: "services.failed", Op: OpAbove, Threshold: 0, Severity: SeverityWarning},
+		{Name: "services-failed", Series: "services.failed", Op: OpAbove, Threshold: 0, For: time.Minute, Severity: SeverityWarning},
 	}
 }
 
