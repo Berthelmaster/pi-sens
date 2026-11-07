@@ -72,7 +72,7 @@ var temperatureAliases = map[string]string{
 func (temperature) Name() string { return "temperature" }
 
 func (temperature) Collect(_ context.Context, env *metrics.Env) (metrics.Result, error) {
-	names := temperatureNames{}
+	names := map[string]bool{}
 
 	zones, err := tempReadZones(env.FS, names)
 	if err != nil {
@@ -104,7 +104,7 @@ type tempZones struct {
 	skipHwmon map[string]bool
 }
 
-func tempReadZones(fsys fs.FS, names temperatureNames) (tempZones, error) {
+func tempReadZones(fsys fs.FS, names map[string]bool) (tempZones, error) {
 	zones := tempZones{skipHwmon: map[string]bool{}}
 	nums, err := numberedEntries(fsys, tempThermalDir, "thermal_zone")
 	if err != nil {
@@ -139,7 +139,7 @@ func tempReadZones(fsys fs.FS, names temperatureNames) (tempZones, error) {
 		}
 
 		zones.sensors = append(zones.sensors, temperatureSensor{
-			Name:   names.claim(temperatureBaseName(typ, id)),
+			Name:   uniqueName(names, temperatureBaseName(typ, id)),
 			Source: id,
 			Type:   typ,
 			TempC:  temp,
@@ -191,7 +191,7 @@ func tempReadTrips(fsys fs.FS, dir string) ([]temperatureTrip, error) {
 // tempReadHwmon reads the temp<N>_input channels of every hwmon chip except
 // those in skip, which holds "hwmon<N>" directory names and "name:<chip>"
 // entries.
-func tempReadHwmon(fsys fs.FS, names temperatureNames, skip map[string]bool) ([]temperatureSensor, error) {
+func tempReadHwmon(fsys fs.FS, names map[string]bool, skip map[string]bool) ([]temperatureSensor, error) {
 	nums, err := numberedEntries(fsys, tempHwmonDir, "hwmon")
 	if err != nil {
 		return nil, err
@@ -218,18 +218,18 @@ func tempReadHwmon(fsys fs.FS, names temperatureNames, skip map[string]bool) ([]
 			}
 			label, _, _ := readValue(fsys, path.Join(dir, chID+"_label"))
 			if base == "" {
-				base = names.claim(temperatureBaseName(chip, id))
+				base = uniqueName(names, temperatureBaseName(chip, id))
 			}
 
 			// The chip's first channel (NVMe "Composite", the only one on
 			// most chips) gets the chip's name, the rest are qualified.
 			name := base
 			if ch != channels[0] {
-				suffix := tempSanitize(label)
+				suffix := seriesName(label, collapseSeparators)
 				if suffix == "" {
 					suffix = chID
 				}
-				name = names.claim(base + "_" + suffix)
+				name = uniqueName(names, base+"_"+suffix)
 			}
 			sensors = append(sensors, temperatureSensor{
 				Name:   name,
@@ -286,7 +286,7 @@ func tempReadMillidegrees(fsys fs.FS, name string) (c float64, ok bool, err erro
 // "cpu-thermal" → "cpu", "rp1_adc" → "rp1", "nvme" → "nvme". fallback is
 // used when nothing is left after sanitising.
 func temperatureBaseName(raw, fallback string) string {
-	name := tempSanitize(raw)
+	name := seriesName(raw, collapseSeparators)
 	if trimmed := strings.TrimSuffix(name, "_thermal"); trimmed != "" {
 		name = trimmed
 	}
@@ -297,36 +297,4 @@ func temperatureBaseName(raw, fallback string) string {
 		return fallback
 	}
 	return name
-}
-
-// tempSanitize lowercases s and replaces every run of characters other
-// than a-z and 0-9 with a single underscore: "Sensor 1" → "sensor_1".
-func tempSanitize(s string) string {
-	var b strings.Builder
-	pending := false
-	for _, r := range strings.ToLower(s) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			if pending && b.Len() > 0 {
-				b.WriteByte('_')
-			}
-			pending = false
-			b.WriteRune(r)
-		} else {
-			pending = true
-		}
-	}
-	return b.String()
-}
-
-// temperatureNames hands out unique sensor names, appending _2, _3, ... when
-// a name is taken (two NVMe drives become nvme and nvme_2).
-type temperatureNames map[string]bool
-
-func (t temperatureNames) claim(name string) string {
-	unique := name
-	for i := 2; t[unique]; i++ {
-		unique = name + "_" + strconv.Itoa(i)
-	}
-	t[unique] = true
-	return unique
 }

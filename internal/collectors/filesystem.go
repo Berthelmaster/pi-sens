@@ -128,7 +128,7 @@ func (f *filesystem) Collect(ctx context.Context, env *metrics.Env) (metrics.Res
 	series := map[string]float64{}
 	names := map[string]bool{}
 	for i, m := range mounts {
-		name := fsUniqueName(names, fsMountName(m.mountpoint))
+		name := uniqueName(names, fsMountName(m.mountpoint))
 		fm := filesystemMount{
 			Name:       name,
 			Device:     m.device,
@@ -355,34 +355,10 @@ func fsMountName(mountpoint string) string {
 	if mountpoint == "/" {
 		return "root"
 	}
-	var b strings.Builder
-	pending := false
-	for _, r := range strings.ToLower(mountpoint) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			if pending && b.Len() > 0 {
-				b.WriteByte('_')
-			}
-			pending = false
-			b.WriteRune(r)
-		} else {
-			pending = true
-		}
+	if name := seriesName(mountpoint, collapseSeparators); name != "" {
+		return name
 	}
-	if b.Len() == 0 {
-		return "mount"
-	}
-	return b.String()
-}
-
-// fsUniqueName returns name, or name_2, name_3, ... if it is already in taken
-// ("/mnt/a_b" and "/mnt/a/b" both sanitise to "mnt_a_b"), and marks it taken.
-func fsUniqueName(taken map[string]bool, name string) string {
-	unique := name
-	for i := 2; taken[unique]; i++ {
-		unique = name + "_" + strconv.Itoa(i)
-	}
-	taken[unique] = true
-	return unique
+	return "mount"
 }
 
 // fsUnescape decodes the \ooo octal escapes of /proc/self/mountinfo.

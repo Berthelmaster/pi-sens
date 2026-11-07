@@ -157,7 +157,7 @@ func (n *netinfo) Collect(ctx context.Context, env *metrics.Env) (metrics.Result
 			iface.Wireless = true
 			n.readIwLink(ctx, env, name, &w)
 			iface.WiFi = &w
-			key := "wifi." + netinfoSeriesName(name)
+			key := "wifi." + seriesName(name, keepSeparators)
 			series[key+".signal_dbm"] = w.SignalDBm
 			series[key+".quality_pct"] = w.QualityPct
 		}
@@ -449,19 +449,6 @@ func netinfoReadGateway(fsys fs.FS) (*netinfoGateway, error) {
 		return nil, fmt.Errorf("proc/net/route: %w", err)
 	}
 	return best, nil
-}
-
-// netinfoSeriesName makes an interface name safe for a dotted series key:
-// lowercase, with anything but a-z, 0-9 and _ turned into _ ("eth0.100" →
-// "eth0_100").
-func netinfoSeriesName(iface string) string {
-	b := []byte(strings.ToLower(iface))
-	for i, c := range b {
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
-			b[i] = '_'
-		}
-	}
-	return string(b)
 }
 
 // netinfoSystemAddrs is the real netinfoAddrSource.

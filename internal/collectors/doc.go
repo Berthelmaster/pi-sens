@@ -8,7 +8,9 @@
 //     The exception is sysfs.go, which holds the read helpers collectors share:
 //     readValue and readInt for single-value files and numberedEntries for
 //     <prefix><N> directory entries. Use them rather than a local copy, and
-//     add a helper there only once a second collector needs it.
+//     add a helper there only once a second collector needs it. names.go
+//     likewise holds seriesName and uniqueName, which turn free text into
+//     series key segments.
 //
 //   - Each collector registers itself from its own init function:
 //
