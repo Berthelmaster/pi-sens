@@ -1,0 +1,12 @@
+# golangci-lint v2 configuration. CI pins the golangci-lint version in
+# .github/workflows/ci.yml; run `golangci-lint run` locally to match it.
+version: "2"
+
+linters:
+  # The default set: errcheck, govet, ineffassign, staticcheck and unused.
+  default: standard
+  exclusions:
+    # Skip the usual noise, such as unchecked Close on files and response
+    # bodies we only read from.
+    presets:
+      - std-error-handling
