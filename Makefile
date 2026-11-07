@@ -5,7 +5,14 @@ PKG     := ./cmd/pisens
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build build-arm64 web web-check test vet lint shellcheck run clean
+# The Go packages to vet, test and lint. web/node_modules sits inside the module
+# and ./... walks into it, so an npm package that ships a .go file would break
+# the run; leave those directories out. -e keeps such a broken package from
+# failing the listing itself. The template turns each package directory into a
+# ./path relative to the module root. CI reads the list with `make -s go-packages`.
+GOPKGS = $(shell $(GO) list -e -f '.{{slice .Dir (len .Root)}}' ./... | grep -v -E '/node_modules(/|$$)')
+
+.PHONY: build build-arm64 web web-check test vet lint go-packages shellcheck run clean
 
 ## build: build the frontend and pisens for the host into bin/pisens
 build: web
@@ -29,15 +36,19 @@ web-check: web/node_modules/.package-lock.json
 
 ## test: run go vet and the unit tests
 test: vet
-	$(GO) test ./...
+	$(GO) test $(GOPKGS)
 
 ## vet: run go vet
 vet:
-	$(GO) vet ./...
+	$(GO) vet $(GOPKGS)
 
 ## lint: run golangci-lint with .golangci.yml (needs golangci-lint v2 on PATH)
 lint:
-	golangci-lint run ./...
+	golangci-lint run $(GOPKGS)
+
+## go-packages: print the Go package directories that vet, test and lint cover
+go-packages:
+	@echo $(GOPKGS)
 
 ## shellcheck: check the deploy scripts with shellcheck (needs shellcheck on PATH)
 shellcheck:
