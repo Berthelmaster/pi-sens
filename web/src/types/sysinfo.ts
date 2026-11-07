@@ -36,7 +36,19 @@ export interface BoardInfo {
   serial?: string
   /** Pi revision code, e.g. "d04170". */
   revision?: string
+  /** MemTotal: the RAM the kernel can use, a little under what is fitted. */
   total_ram_bytes?: number
+  // Decoded from a new-style revision code; missing for older boards.
+  /** Board type, e.g. "5", "4B", "Zero 2 W". */
+  type?: string
+  /** SoC, e.g. "BCM2712". */
+  processor?: string
+  /** e.g. "Sony UK". */
+  manufacturer?: string
+  /** RAM fitted to the board, e.g. 8589934592 for 8 GB. */
+  fitted_ram_bytes?: number
+  /** PCB revision, e.g. "1.4". */
+  pcb_revision?: string
 }
 
 /** The sysinfo section of a snapshot, or undefined when it has none. */

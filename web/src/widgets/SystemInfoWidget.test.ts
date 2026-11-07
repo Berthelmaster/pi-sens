@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { formatDateTime, formatUptime } from './SystemInfoWidget.svelte'
+import {
+  boardDetails,
+  formatDateTime,
+  formatUptime,
+} from './SystemInfoWidget.svelte'
 
 describe('formatUptime', () => {
   it('shows every unit down to seconds', () => {
@@ -24,5 +28,25 @@ describe('formatDateTime', () => {
 
   it('shows a placeholder for an invalid time', () => {
     expect(formatDateTime(NaN)).toBe('–')
+  })
+})
+
+describe('boardDetails', () => {
+  it('joins the decoded RAM, SoC and manufacturer', () => {
+    expect(
+      boardDetails({
+        fitted_ram_bytes: 8 * 2 ** 30,
+        processor: 'BCM2712',
+        manufacturer: 'Sony UK',
+      }),
+    ).toBe('8 GiB · BCM2712 · Sony UK')
+    expect(boardDetails({ fitted_ram_bytes: 512 * 2 ** 20 })).toBe('512 MiB')
+  })
+
+  it('is undefined when nothing was decoded', () => {
+    expect(
+      boardDetails({ model: 'Raspberry Pi Model B Rev 2' }),
+    ).toBeUndefined()
+    expect(boardDetails({ processor: ' ' })).toBeUndefined()
   })
 })

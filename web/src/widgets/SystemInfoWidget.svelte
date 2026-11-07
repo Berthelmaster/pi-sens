@@ -1,5 +1,6 @@
 <script lang="ts" module>
-  import { PLACEHOLDER } from '../lib/format'
+  import { formatBytes, PLACEHOLDER } from '../lib/format'
+  import type { BoardInfo } from '../types/sysinfo'
 
   /**
    * Formats an uptime with every unit from the largest non-zero one down to
@@ -34,6 +35,22 @@
       `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
       `${p(d.getHours())}:${p(d.getMinutes())}`
     )
+  }
+
+  /**
+   * The fitted RAM, SoC and manufacturer decoded from the revision code, e.g.
+   * "8 GiB · BCM2712 · Sony UK", or undefined when there are none.
+   */
+  export function boardDetails(board: BoardInfo): string | undefined {
+    const ram = num(board.fitted_ram_bytes)
+    const parts = [
+      ram !== undefined && ram > 0
+        ? formatBytes(ram, { decimals: 0 })
+        : undefined,
+      text(board.processor),
+      text(board.manufacturer),
+    ].filter((p) => p !== undefined)
+    return parts.length > 0 ? parts.join(' · ') : undefined
   }
 
   /** A non-empty string field, or undefined. */
@@ -84,9 +101,10 @@
   })
   let procs = $derived(num(sys.procs))
   let threads = $derived(num(sys.threads))
-  let board = $derived(
+  let board = $derived<BoardInfo>(
     typeof sys.board === 'object' && sys.board !== null ? sys.board : {},
   )
+  let details = $derived(boardDetails(board))
 </script>
 
 <Card title="System" status={error ? 'unknown' : undefined}>
@@ -98,7 +116,12 @@
     {/if}
     <dl>
       <dt>Board</dt>
-      <dd>{text(board.model) ?? PLACEHOLDER}</dd>
+      <dd>
+        {text(board.model) ?? PLACEHOLDER}
+        {#if details}
+          <span class="muted">· {details}</span>
+        {/if}
+      </dd>
 
       <dt>OS</dt>
       <dd>{text(sys.os) ?? PLACEHOLDER}</dd>
