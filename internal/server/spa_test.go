@@ -130,3 +130,82 @@ func TestUIRejectsOtherMethods(t *testing.T) {
 		t.Errorf("POST /history: status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
 	}
 }
+
+func getWithETag(t *testing.T, s *Server, target, etag string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("If-None-Match", etag)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestUIFilesHaveStrongETags(t *testing.T) {
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
+
+	seen := map[string]string{}
+	for _, target := range []string{"/", "/favicon.svg", "/assets/index-abc.js"} {
+		etag := get(t, s, target).Header().Get("ETag")
+		if !strings.HasPrefix(etag, `"`) || !strings.HasSuffix(etag, `"`) || len(etag) < 3 {
+			t.Errorf("GET %s: ETag = %q, want a strong quoted ETag", target, etag)
+		}
+		if other, ok := seen[etag]; ok {
+			t.Errorf("GET %s: ETag %q is the same as for %s", target, etag, other)
+		}
+		seen[etag] = target
+	}
+}
+
+func TestUIMatchingIfNoneMatchIs304(t *testing.T) {
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
+
+	for _, target := range []string{"/", "/index.html", "/favicon.svg", "/assets/index-abc.js"} {
+		etag := get(t, s, target).Header().Get("ETag")
+
+		rec := getWithETag(t, s, target, etag)
+		if rec.Code != http.StatusNotModified {
+			t.Errorf("GET %s with matching If-None-Match: status = %d, want %d", target, rec.Code, http.StatusNotModified)
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("GET %s with matching If-None-Match: body = %q, want empty", target, rec.Body.String())
+		}
+		if got := rec.Header().Get("ETag"); got != etag {
+			t.Errorf("GET %s with matching If-None-Match: ETag = %q, want %q", target, got, etag)
+		}
+
+		rec = getWithETag(t, s, target, `"stale"`)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s with stale If-None-Match: status = %d, want %d", target, rec.Code, http.StatusOK)
+		}
+	}
+}
+
+func TestUIETagFollowsContent(t *testing.T) {
+	etagOf := func(index string) string {
+		ui := fstest.MapFS{"index.html": {Data: []byte(index)}}
+		s := New(":0", "dev", ui, discardLogger(), &fakeSource{}, nil, nil)
+		return get(t, s, "/").Header().Get("ETag")
+	}
+
+	before := etagOf(indexHTML)
+	if again := etagOf(indexHTML); again != before {
+		t.Errorf("same content: ETag = %q, then %q, want them equal", before, again)
+	}
+	if after := etagOf(indexHTML + "<p>new build</p>"); after == before {
+		t.Errorf("changed content: ETag stayed %q", before)
+	}
+}
+
+func TestUIDeepLinksGetIndexETag(t *testing.T) {
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
+	indexETag := get(t, s, "/").Header().Get("ETag")
+
+	for _, target := range []string{"/history", "/a/b/c", "/assets"} {
+		if etag := get(t, s, target).Header().Get("ETag"); etag != indexETag {
+			t.Errorf("GET %s: ETag = %q, want index.html's %q", target, etag, indexETag)
+		}
+		if rec := getWithETag(t, s, target, indexETag); rec.Code != http.StatusNotModified {
+			t.Errorf("GET %s with index.html's ETag: status = %d, want %d", target, rec.Code, http.StatusNotModified)
+		}
+	}
+}
