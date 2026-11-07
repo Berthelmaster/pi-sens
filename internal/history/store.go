@@ -150,7 +150,7 @@ func applyMigration(ctx context.Context, db *sql.DB, version int, stmt string) e
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	if _, err := tx.ExecContext(ctx, stmt); err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func (s *Store) Insert(ctx context.Context, samples []Sample) error {
 	if err != nil {
 		return fmt.Errorf("history: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 
 	addSeries, err := tx.PrepareContext(ctx, `INSERT INTO series (key) VALUES (?)
 		ON CONFLICT (key) DO UPDATE SET key = excluded.key RETURNING id`)
