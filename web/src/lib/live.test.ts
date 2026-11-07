@@ -1,5 +1,6 @@
 import { get, type Readable } from 'svelte/store'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Alert, AlertSet } from '../types/alerts'
 import type { Snapshot } from '../types/snapshot'
 import {
   BACKOFF_MAX_MS,
@@ -15,12 +16,15 @@ class FakeEventSource implements EventSourceLike {
   onopen: ((ev: Event) => unknown) | null = null
   onerror: ((ev: Event) => unknown) | null = null
   closed = false
-  private listeners: ((ev: MessageEvent) => void)[] = []
+  private listeners: { type: string; fn: (ev: MessageEvent) => void }[] = []
 
   constructor(readonly url: string) {}
 
-  addEventListener(_type: 'snapshot', listener: (ev: MessageEvent) => void) {
-    this.listeners.push(listener)
+  addEventListener(
+    type: 'snapshot' | 'alerts',
+    fn: (ev: MessageEvent) => void,
+  ) {
+    this.listeners.push({ type, fn })
   }
 
   close() {
@@ -35,9 +39,17 @@ class FakeEventSource implements EventSourceLike {
     this.onerror?.(new Event('error'))
   }
 
+  emit(type: string, data: string) {
+    const ev = new MessageEvent(type, { data })
+    for (const l of this.listeners) if (l.type === type) l.fn(ev)
+  }
+
   send(snap: Snapshot) {
-    const ev = new MessageEvent('snapshot', { data: JSON.stringify(snap) })
-    for (const l of this.listeners) l(ev)
+    this.emit('snapshot', JSON.stringify(snap))
+  }
+
+  sendAlerts(set: AlertSet) {
+    this.emit('alerts', JSON.stringify(set))
   }
 }
 
@@ -52,6 +64,38 @@ class FakeDocument extends EventTarget {
 
 function snap(t: number, series: Record<string, number> = {}): Snapshot {
   return { timestamp: new Date(t).toISOString(), collectors: {}, series }
+}
+
+function firing(rule: string): Alert {
+  return {
+    rule,
+    series: 'temp.cpu_c',
+    severity: 'critical',
+    op: '>',
+    threshold: 82,
+    for_s: 30,
+    state: 'firing',
+    value: 83.4,
+    pending_at: '2026-11-07T09:20:12Z',
+    firing_at: '2026-11-07T09:20:42Z',
+  }
+}
+
+function alertSet(version: number, ...rules: string[]): AlertSet {
+  return { version, firing: rules.map(firing), resolved: [] }
+}
+
+/** Answers each URL with its own pending response. */
+function fetchByUrl() {
+  const resolvers = new Map<string, (r: Response) => void>()
+  const fn = vi.fn(
+    (url: string) =>
+      new Promise<Response>((r) => {
+        resolvers.set(url, r)
+      }),
+  )
+  const respond = (url: string, res: Response) => resolvers.get(url)!(res)
+  return { fn, respond }
 }
 
 /** Keeps a store subscribed and returns its current value on demand. */
@@ -273,26 +317,110 @@ describe('createLive', () => {
   })
 
   it('uses /api/metrics until the stream delivers', async () => {
-    let resolve!: (r: Response) => void
-    fetchMock.mockReturnValue(new Promise<Response>((r) => (resolve = r)))
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
     const live = setup()
     const latest = watch(live.snapshot)
 
-    resolve(new Response(JSON.stringify(snap(T0, { a: 1 }))))
+    respond('/api/metrics', new Response(JSON.stringify(snap(T0, { a: 1 }))))
     await vi.waitFor(() => expect(latest.get()).not.toBeNull())
     expect(latest.get()?.timestamp).toBe(new Date(T0).toISOString())
   })
 
   it('lets the stream win over a slow /api/metrics', async () => {
-    let resolve!: (r: Response) => void
-    fetchMock.mockReturnValue(new Promise<Response>((r) => (resolve = r)))
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
     const live = setup()
     const latest = watch(live.snapshot)
     last().send(snap(T0 + 2000, { a: 2 }))
 
-    resolve(new Response(JSON.stringify(snap(T0, { a: 1 }))))
+    respond('/api/metrics', new Response(JSON.stringify(snap(T0, { a: 1 }))))
     await vi.advanceTimersByTimeAsync(0)
     expect(latest.get()?.series.a).toBe(2)
+  })
+
+  it('loads the alerts from /api/alerts', async () => {
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
+    const live = setup()
+    const set = watch(live.alerts)
+    expect(fetchMock).toHaveBeenCalledWith('/api/alerts', expect.anything())
+    expect(set.get()).toBeNull()
+
+    respond('/api/alerts', new Response(JSON.stringify(alertSet(3, 'hot'))))
+    await vi.waitFor(() => expect(set.get()).not.toBeNull())
+    expect(set.get()?.firing.map((a) => a.rule)).toEqual(['hot'])
+  })
+
+  it('stays without alerts when the backend has them turned off', async () => {
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
+    const live = setup()
+    const set = watch(live.alerts)
+    respond(
+      '/api/alerts',
+      new Response('{"error":"not found"}', { status: 404 }),
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    expect(set.get()).toBeNull()
+  })
+
+  it('follows alerts as they fire and resolve', () => {
+    const live = setup()
+    const set = watch(live.alerts)
+    last().open()
+    last().sendAlerts(alertSet(1))
+    expect(set.get()?.firing).toEqual([])
+
+    last().sendAlerts(alertSet(2, 'hot', 'full'))
+    expect(set.get()?.firing).toHaveLength(2)
+
+    last().sendAlerts({ ...alertSet(3, 'full'), resolved: [firing('hot')] })
+    expect(set.get()?.firing.map((a) => a.rule)).toEqual(['full'])
+    expect(set.get()?.resolved.map((a) => a.rule)).toEqual(['hot'])
+  })
+
+  it('takes the alerts a restarted backend sends', () => {
+    const live = setup()
+    const set = watch(live.alerts)
+    last().open()
+    last().sendAlerts(alertSet(7, 'hot'))
+    last().fail()
+    vi.advanceTimersByTime(1000)
+    last().open()
+    // Versions start over with the backend.
+    last().sendAlerts(alertSet(0))
+    expect(set.get()?.firing).toEqual([])
+  })
+
+  it('lets the stream win over a slow /api/alerts', async () => {
+    const { fn, respond } = fetchByUrl()
+    fetchMock = fn
+    const live = setup()
+    const set = watch(live.alerts)
+    last().sendAlerts(alertSet(5))
+
+    respond('/api/alerts', new Response(JSON.stringify(alertSet(4, 'hot'))))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(set.get()?.version).toBe(5)
+  })
+
+  it('ignores a bad alerts event', () => {
+    const live = setup()
+    const set = watch(live.alerts)
+    last().sendAlerts(alertSet(1, 'hot'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    last().emit('alerts', '{nope')
+    warn.mockRestore()
+    expect(set.get()?.firing).toHaveLength(1)
+  })
+
+  it('keeps the connection open for alerts alone', () => {
+    const live = setup()
+    const set = watch(live.alerts)
+    expect(sources).toHaveLength(1)
+    set.unsubscribe()
+    expect(sources[0].closed).toBe(true)
   })
 
   it('pauses while the tab is hidden and resumes when visible', () => {

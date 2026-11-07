@@ -178,6 +178,8 @@ rules:
 
 `firing` lists critical alerts first, then the rest by when they fired. `resolved` holds the last 50 resolved alerts, newest first, each with a `resolved_at`. `value` is the series value at the alert's last state change, and `version` goes up every time the set changes. Pending alerts are not listed.
 
+The dashboard shows firing alerts in a banner under the header, critical ones in red and warnings in amber, and updates it live from the stream. The **Alerts** entry in the nav carries a count of the firing alerts and opens the ten most recent resolved ones. While a critical alert fires, the browser tab title starts with `(!)`. To try it, start pisens with a rules file whose threshold the Pi already crosses, for example `system.procs > 1`.
+
 ### Adding a collector
 
 Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions, `cpufreq.go` for a small reference implementation and `cpu.go` for one that keeps state between samples.

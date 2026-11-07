@@ -31,6 +31,7 @@ Each card on the Overview page is one component in this folder. The layout shell
 ```
 
 - `snapshot` is the latest snapshot, `null` until the first one arrives. A failed collector's section is `{ "error": "..." }`; check it with `isCollectorError`.
+- `alerts` is the latest set of firing and resolved alerts (`types/alerts.ts`), `null` until known or when the backend has alerts turned off.
 - `seriesHistory(key)` keeps the last five minutes of one series key. Samples without the key are left out.
 - Format values with the helpers in `web/src/lib/format.ts` (`formatBytes`, `formatBitsPerSecond`, `formatPercent`, `formatDuration`, `formatTemp`, `formatHz`). They show `–` for a missing value, so series values can go straight in.
 

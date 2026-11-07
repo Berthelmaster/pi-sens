@@ -1,8 +1,8 @@
 // Live metrics from the backend.
 //
-// One EventSource on /api/stream feeds three stores: the latest snapshot, the
-// connection state for the header indicator, and a rolling buffer of recent
-// series values for sparklines. The connection opens when the first component
+// One EventSource on /api/stream feeds four stores: the latest snapshot, the
+// latest set of alerts, the connection state for the header indicator, and a
+// rolling buffer of recent series values for sparklines. The connection opens when the first component
 // subscribes to any of them and closes when the last one unsubscribes, so
 // nothing keeps running once the dashboard is gone.
 //
@@ -12,6 +12,7 @@
 // restarts).
 
 import { derived, readable, writable, type Readable } from 'svelte/store'
+import type { AlertSet } from '../types/alerts'
 import { parseTimestamp, type Snapshot } from '../types/snapshot'
 
 export type ConnectionState = 'connecting' | 'live' | 'reconnecting' | 'offline'
@@ -113,7 +114,10 @@ export class SeriesBuffer {
 export interface EventSourceLike {
   onopen: ((ev: Event) => unknown) | null
   onerror: ((ev: Event) => unknown) | null
-  addEventListener(type: 'snapshot', listener: (ev: MessageEvent) => void): void
+  addEventListener(
+    type: 'snapshot' | 'alerts',
+    listener: (ev: MessageEvent) => void,
+  ): void
   close(): void
 }
 
@@ -127,6 +131,7 @@ interface EventTargetLike {
 export interface LiveOptions {
   streamUrl?: string
   metricsUrl?: string
+  alertsUrl?: string
   windowMs?: number
   openStream?: (url: string) => EventSourceLike
   fetch?: (url: string, init?: RequestInit) => Promise<Response>
@@ -142,6 +147,11 @@ export interface LiveOptions {
 export interface Live {
   /** The latest snapshot, or null until the first one arrives. */
   snapshot: Readable<Snapshot | null>
+  /**
+   * The latest alerts, or null until they arrive. Stays null when the
+   * backend has alerts turned off.
+   */
+  alerts: Readable<AlertSet | null>
   connection: Readable<Connection>
   /** Recent history of one series key, e.g. seriesHistory('cpu.usage_pct'). */
   seriesHistory(key: string): Readable<SeriesHistory>
@@ -158,6 +168,7 @@ export function createLive(opts: LiveOptions = {}): Live {
   const {
     streamUrl = '/api/stream',
     metricsUrl = '/api/metrics',
+    alertsUrl = '/api/alerts',
     windowMs = HISTORY_WINDOW_MS,
     openStream = (url) => new EventSource(url),
     fetch: fetchFn = (url, init) => fetch(url, init),
@@ -173,12 +184,14 @@ export function createLive(opts: LiveOptions = {}): Live {
     retryAt: null,
   }
   const latest = writable<Snapshot | null>(null)
+  const alertSet = writable<AlertSet | null>(null)
   const connection = writable(initialConnection)
   const buffer = new SeriesBuffer(windowMs)
   const bufferStore = writable(buffer)
 
   let latestTime: number | null = null
   let haveSnapshot = false
+  let haveAlerts = false
 
   let source: EventSourceLike | null = null
   let failures = 0
@@ -186,6 +199,7 @@ export function createLive(opts: LiveOptions = {}): Live {
   let pauseTimer: ReturnType<typeof setTimeout> | undefined
   let paused = false
   let initialFetch: AbortController | null = null
+  let alertsFetch: AbortController | null = null
 
   function setState(state: ConnectionState, retryAt: number | null = null) {
     connection.update((c) => ({ ...c, state, retryAt }))
@@ -217,6 +231,21 @@ export function createLive(opts: LiveOptions = {}): Live {
     accept(snap)
   }
 
+  function onAlerts(ev: MessageEvent) {
+    let set: AlertSet
+    try {
+      set = JSON.parse(ev.data as string) as AlertSet
+    } catch (err) {
+      console.warn('pisens: bad alerts event', err)
+      return
+    }
+    // Every stream sends the whole set on connect and again on each change,
+    // so the newest event always wins. Versions are not compared: they start
+    // over when the backend restarts.
+    haveAlerts = true
+    alertSet.set(set)
+  }
+
   function connect() {
     disconnect()
     const es = openStream(streamUrl)
@@ -228,6 +257,9 @@ export function createLive(opts: LiveOptions = {}): Live {
     }
     es.addEventListener('snapshot', (ev) => {
       if (source === es) onSnapshot(ev)
+    })
+    es.addEventListener('alerts', (ev) => {
+      if (source === es) onAlerts(ev)
     })
     es.onerror = () => {
       if (source !== es) return
@@ -275,6 +307,26 @@ export function createLive(opts: LiveOptions = {}): Live {
       })
   }
 
+  function loadAlerts() {
+    // Same as loadInitial: the stream sends the alerts on connect too, and
+    // wins if it is first. A backend with alerts turned off answers 404.
+    const ctrl = new AbortController()
+    alertsFetch = ctrl
+    fetchFn(alertsUrl, { signal: ctrl.signal })
+      .then(async (res) => {
+        if (!res.ok) return
+        const set = (await res.json()) as AlertSet
+        if (!haveAlerts && !ctrl.signal.aborted) {
+          haveAlerts = true
+          alertSet.set(set)
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alertsFetch === ctrl) alertsFetch = null
+      })
+  }
+
   function onVisibilityChange() {
     if (!doc) return
     clearTimeout(pauseTimer)
@@ -308,6 +360,7 @@ export function createLive(opts: LiveOptions = {}): Live {
     failures = 0
     setState(haveSnapshot ? 'reconnecting' : 'connecting')
     if (!haveSnapshot) loadInitial()
+    if (!haveAlerts) loadAlerts()
     connect()
     doc?.addEventListener('visibilitychange', onVisibilityChange)
     win?.addEventListener('online', onOnline)
@@ -321,6 +374,8 @@ export function createLive(opts: LiveOptions = {}): Live {
     pauseTimer = undefined
     initialFetch?.abort()
     initialFetch = null
+    alertsFetch?.abort()
+    alertsFetch = null
     disconnect()
   }
 
@@ -342,6 +397,7 @@ export function createLive(opts: LiveOptions = {}): Live {
 
   return {
     snapshot: shared(latest, null),
+    alerts: shared(alertSet, null),
     connection: shared(connection, initialConnection),
     seriesHistory(key) {
       let store = historyByKey.get(key)
@@ -358,6 +414,8 @@ const live = createLive()
 
 /** The latest snapshot, or null until the first one arrives. */
 export const snapshot = live.snapshot
+/** Firing and recently resolved alerts, or null until they are known. */
+export const alerts = live.alerts
 /** Stream state and time of the last update, for the header indicator. */
 export const connection = live.connection
 /**
