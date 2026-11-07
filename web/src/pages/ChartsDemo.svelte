@@ -80,6 +80,22 @@
     return () => clearInterval(timer)
   })
 
+  // Changing which cores the chart shows, and in what order, checks that
+  // hidden legend entries stay with their series.
+  const CORE_SETS: Record<string, number[]> = {
+    all: [0, 1, 2, 3],
+    reversed: [3, 2, 1, 0],
+    'drop-1': [0, 2, 3],
+    'two-cores': [2, 0],
+  }
+  let coreSet = $state('all')
+  let coreOrder = $derived(CORE_SETS[coreSet] ?? CORE_SETS.all)
+  let coreSeries = $derived(coreOrder.map((i) => ({ label: `Core ${i}` })))
+  let coreData = $derived<uPlot.AlignedData>([
+    cores[0],
+    ...coreOrder.map((i) => cores[i + 1]),
+  ])
+
   // Unmounting and remounting the charts is a quick leak check: watch the
   // canvas count in devtools stay flat.
   let mounted = $state(true)
@@ -93,6 +109,15 @@
 <div class="controls">
   <label><input type="checkbox" bind:checked={live} /> Live data</label>
   <label><input type="checkbox" bind:checked={mounted} /> Mounted</label>
+  <label>
+    Cores
+    <select bind:value={coreSet}>
+      <option value="all">All, in order</option>
+      <option value="reversed">All, reversed</option>
+      <option value="drop-1">Without Core 1</option>
+      <option value="two-cores">Core 2 and Core 0</option>
+    </select>
+  </label>
   <label>
     Gauge value
     <input type="range" min="0" max="100" bind:value={gaugeValue} />
@@ -143,13 +168,8 @@
     <div class="wide">
       <Card title="CPU per core">
         <TimeSeriesChart
-          data={cores}
-          series={[
-            { label: 'Core 0' },
-            { label: 'Core 1' },
-            { label: 'Core 2' },
-            { label: 'Core 3' },
-          ]}
+          data={coreData}
+          series={coreSeries}
           format={pct}
           min={0}
           max={100}

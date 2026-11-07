@@ -19,6 +19,7 @@
   import uPlot from 'uplot'
   import 'uplot/dist/uPlot.min.css'
   import { untrack } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
   import {
     canvasFont,
     resolveColor,
@@ -36,8 +37,19 @@
      * the chart; in-place changes are not seen.
      */
     data: uPlot.AlignedData
+    /**
+     * One entry per line. The chart is only rebuilt when the labels or
+     * colours change, so a new array with the same entries is cheap, but
+     * prefer a stable value (`$derived` or a constant) over a literal built
+     * from live data. Hidden legend entries are remembered by label, so
+     * keep labels unique; lines that share one are hidden together.
+     */
     series: ChartSeries[]
-    /** Formats y values for the axis and tooltip, e.g. `(v) => v + ' %'`. */
+    /**
+     * Formats y values for the axis and tooltip, e.g. `(v) => v + ' %'`.
+     * A new function redraws the axes, so prefer a stable one over an
+     * inline arrow that is recreated on every update.
+     */
     format?: (value: number) => string
     /** Fixed bottom of the y scale. Left out, it follows the data. */
     min?: number
@@ -91,8 +103,11 @@
   let width = $state(0)
   let chart = $state.raw<uPlot>()
 
-  /** Series hidden from the legend, by index into `series`. */
-  let hidden = $state<boolean[]>([])
+  /**
+   * Labels of the series hidden from the legend. Keyed by label rather than
+   * index so the right lines stay hidden when the series list changes.
+   */
+  const hidden = new SvelteSet<string>()
   let colors = $derived(series.map((s, i) => s.color ?? seriesColor(i)))
   let showLegend = $derived(legend ?? series.length > 1)
 
@@ -100,6 +115,12 @@
   // that changes, not on every new set of bands.
   let bandMask = $derived(series.map((_, i) => (bands?.[i] ? 1 : 0)).join(''))
   let hasXRange = $derived(xRange !== undefined)
+
+  // What the chart is built from, as a string so a new but equal series
+  // array does not rebuild it.
+  let seriesShape = $derived(
+    JSON.stringify(series.map((s) => [s.label, s.color ?? null])),
+  )
 
   // uPlot gets the band edges as extra series after the visible ones: for
   // every series with a band its max, then its min.
@@ -116,6 +137,8 @@
   let bandEdges: number[] = []
   /** The x range the scale reads, kept in step with the data. */
   let xr: [number, number] | undefined
+  /** The format the axis labels were last laid out with. */
+  let drawnFormat: Props['format']
 
   interface Hover {
     idx: number
@@ -126,23 +149,32 @@
   let hover = $state<Hover | null>(null)
 
   // Build the chart. Theme, series and scale changes rebuild it, since the
-  // resolved colours are baked into the options; data and size updates below
-  // go through the existing instance.
+  // resolved colours are baked into the options; data, size and format
+  // updates below go through the existing instance.
   $effect(() => {
     void theme.current
-    const fmt = format
+    void seriesShape
+    const mask = bandMask
     const axisColor = resolveColor(el, 'var(--chart-axis)')
     const gridColor = resolveColor(el, 'var(--chart-grid)')
     const font = canvasFont(el, 12)
-    const strokes = colors.map((c) => resolveColor(el, c))
-    const isHidden = untrack(() => hidden)
-    const mask = bandMask
+    // Only the shape above is tracked; the array itself may be new on every
+    // update.
+    const list = untrack(() => series)
+    const strokes = untrack(() => colors).map((c) => resolveColor(el, c))
+    // Forget hidden series that are gone, so one that comes back later
+    // starts out visible.
+    const isHidden = untrack(() => {
+      const labels = new Set(list.map((s) => s.label))
+      for (const l of hidden) if (!labels.has(l)) hidden.delete(l)
+      return list.map((s) => hidden.has(s.label))
+    })
 
     bandEdges = []
     const edgeSeries: uPlot.Series[] = []
     const bandOpts: uPlot.Band[] = []
-    let next = series.length + 1
-    for (let i = 0; i < series.length; i++) {
+    let next = list.length + 1
+    for (let i = 0; i < list.length; i++) {
       bandEdges[i] = 0
       if (mask[i] !== '1') continue
       bandEdges[i] = next
@@ -152,7 +184,7 @@
       })
       for (const edge of ['max', 'min']) {
         edgeSeries.push({
-          label: `${series[i].label} ${edge}`,
+          label: `${list[i].label} ${edge}`,
           class: 'band-edge',
           stroke: 'transparent',
           width: 0,
@@ -164,6 +196,7 @@
     }
 
     xr = untrack(() => xRange)
+    drawnFormat = untrack(() => format)
     const xScale: uPlot.Scale = { time: true }
     if (hasXRange) {
       xScale.range = (_u, lo, hi) => (xr ? [xr[0], xr[1]] : [lo, hi])
@@ -191,7 +224,8 @@
         { ...axis },
         {
           ...axis,
-          values: (_u, splits) => splits.map(fmt),
+          // Read at draw time, so a new format needs no rebuild.
+          values: (_u, splits) => splits.map((v) => format(v)),
           // Fit the widest label: tick + gap + text + a little air.
           size: (_u, values) =>
             Math.ceil(textWidth(values ?? [], font)) + 4 + 5 + 6,
@@ -199,7 +233,7 @@
       ],
       series: [
         {},
-        ...series.map((s, i): uPlot.Series => ({
+        ...list.map((s, i): uPlot.Series => ({
           label: s.label,
           stroke: strokes[i],
           width: 2,
@@ -254,15 +288,30 @@
     if (width > 0) chart?.setSize({ width, height })
   })
 
+  // A new format only changes the axis labels: redraw and resize the axes,
+  // unless the chart was just built with it.
+  $effect(() => {
+    const fmt = format
+    if (fmt === drawnFormat) return
+    drawnFormat = fmt
+    untrack(() => chart)?.redraw(false, true)
+  })
+
   function toggle(i: number) {
-    hidden[i] = !hidden[i]
-    const show = !hidden[i]
-    chart?.setSeries(i + 1, { show })
-    const edge = bandEdges[i]
-    if (edge) {
-      chart?.setSeries(edge, { show })
-      chart?.setSeries(edge + 1, { show })
-    }
+    const { label } = series[i]
+    const show = hidden.has(label)
+    if (show) hidden.delete(label)
+    else hidden.add(label)
+    // Every line with this label, in case two share one.
+    series.forEach((s, j) => {
+      if (s.label !== label) return
+      chart?.setSeries(j + 1, { show })
+      const edge = bandEdges[j]
+      if (edge) {
+        chart?.setSeries(edge, { show })
+        chart?.setSeries(edge + 1, { show })
+      }
+    })
   }
 
   function valueAt(seriesIdx: number, idx: number): string {
@@ -293,7 +342,7 @@
           {timeFormat.format(new Date(data[0][hover.idx] * 1000))}
         </div>
         {#each series as s, i (i)}
-          {#if !hidden[i]}
+          {#if !hidden.has(s.label)}
             <div class="row">
               <span class="swatch" style:background={colors[i]}></span>
               <span class="name">{s.label}</span>
@@ -310,8 +359,8 @@
       {#each series as s, i (i)}
         <button
           type="button"
-          aria-pressed={!hidden[i]}
-          title={hidden[i] ? `Show ${s.label}` : `Hide ${s.label}`}
+          aria-pressed={!hidden.has(s.label)}
+          title={hidden.has(s.label) ? `Show ${s.label}` : `Hide ${s.label}`}
           onclick={() => toggle(i)}
         >
           <span class="swatch" style:background={colors[i]}></span>
