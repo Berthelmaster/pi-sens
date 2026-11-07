@@ -30,7 +30,7 @@ curl localhost:8080/api/health
 
 Open http://localhost:8080/ for the dashboard.
 
-To run on the Pi, copy `bin/pisens-linux-arm64` over and start it. It has no runtime dependencies.
+The binary has no runtime dependencies. To run it on the Pi as a service, see [Install on a Raspberry Pi](#install-on-a-raspberry-pi).
 
 ### Frontend development
 
@@ -105,6 +105,50 @@ curl -N localhost:8080/api/stream
 ### Adding a collector
 
 Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions, `cpufreq.go` for a small reference implementation and `cpu.go` for one that keeps state between samples.
+
+## Install on a Raspberry Pi
+
+`deploy/install.sh` installs pisens as a systemd service that starts on boot and restarts if it crashes. It works on Raspberry Pi OS (64-bit) and other systemd-based arm64 distributions.
+
+Build the arm64 binary, copy it and the `deploy` directory to the Pi, and run the script there as root:
+
+```sh
+make build-arm64
+ssh pi@raspberrypi.local mkdir -p pisens
+scp -r deploy bin/pisens-linux-arm64 pi@raspberrypi.local:pisens/
+ssh pi@raspberrypi.local sudo pisens/deploy/install.sh pisens/pisens-linux-arm64
+```
+
+If you build on the Pi itself, `sudo deploy/install.sh` without an argument picks up `bin/pisens-linux-arm64` or `bin/pisens` from the repository.
+
+The script:
+
+- creates a `pisens` system user (no login shell, no home) in the `video` group
+- installs the binary as `/usr/local/bin/pisens` and the unit as `/etc/systemd/system/pisens.service`
+- creates `/etc/pisens/pisens.env` from `deploy/pisens.env.example` the first time and never overwrites it after that; `/etc/pisens/pisens.env.example` is refreshed on every run so new settings show up
+- runs `systemctl daemon-reload` and `systemctl enable --now pisens`, then checks the service stayed up
+
+The dashboard is then on http://raspberrypi.local:8080/. Check on the service with:
+
+```sh
+systemctl status pisens
+journalctl -u pisens -f
+curl localhost:8080/api/health
+```
+
+**Settings.** Edit `/etc/pisens/pisens.env` (every variable is listed there, commented out with its default) and run `sudo systemctl restart pisens`. The data directory is always `/var/lib/pisens`, which systemd creates for the service. For changes to the unit itself use `sudo systemctl edit pisens`, so an upgrade does not undo them.
+
+**Upgrade.** Run the script again with the new binary. It replaces the binary and the unit, keeps your settings and data, and restarts the service. Running it twice in a row is safe.
+
+**Pi health data.** The throttling, voltage, clock and power sections come from `vcgencmd`, which needs access to `/dev/vcio` through the `video` group. The unit adds that group, so it works out of the box on Raspberry Pi OS. If those sections show as unavailable, check that `vcgencmd` is installed (package `raspi-utils`, or `libraspberrypi-bin` on older releases) and that this prints `throttled=0x0` or similar:
+
+```sh
+sudo -u pisens vcgencmd get_throttled
+```
+
+**Hardening.** The service runs with `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `NoNewPrivileges=yes` and no capabilities. It can read `/proc`, `/sys` and `/dev/vcio` but write only to `/var/lib/pisens`. Because of `ProtectHome=yes`, a separate `/home` partition does not show correct usage on the Storage widget.
+
+**Uninstall.** `sudo deploy/install.sh --uninstall` stops and disables the service and removes the unit and binary. It keeps `/etc/pisens`, `/var/lib/pisens` and the `pisens` user; add `--purge` to remove those as well.
 
 ## CI
 
