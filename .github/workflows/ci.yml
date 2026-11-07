@@ -78,7 +78,7 @@ jobs:
       # normal user against a fake root, then as root on the real paths for
       # the privilege handling (this runner is thrown away afterwards).
       - run: deploy/tests/deploy_test.sh
-      - run: sudo env PISENS_DEPLOY_ROOT_TEST=1 deploy/tests/deploy_root_test.sh
+      - run: sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" PISENS_DEPLOY_ROOT_TEST=1 deploy/tests/deploy_root_test.sh
 
   build-arm64:
     name: Build linux/arm64

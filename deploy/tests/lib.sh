@@ -7,6 +7,7 @@ readonly deploy=$tests_dir/../deploy.sh
 failures=0
 status=0
 out=""
+current_test=""
 
 # make_binary writes a fake pisens to path that prints "pisens VERSION" for
 # --version and records which user ran it. With "crash" the stub systemctl
@@ -55,6 +56,10 @@ restarts() { grep -c '^systemctl restart pisens$' "$STUB_STATE/calls" || true; }
 
 fail() {
 	printf '  FAIL: %s\n' "$*"
+	# On GitHub Actions also as an annotation, which shows without the log.
+	if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+		printf '::error title=%s::%s: %s\n' "$(basename "$0")" "$current_test" "$*"
+	fi
 	printf '%s\n' "$out" | sed 's/^/    | /'
 	failures=$((failures + 1))
 }
@@ -70,6 +75,7 @@ contains() { [[ $1 == *"$2"* ]]; }
 run_tests() {
 	local t before
 	for t in $(declare -F | awk '$3 ~ /^test_/ { print $3 }'); do
+		current_test=$t
 		before=$failures
 		"$t"
 		if [[ $failures -eq $before ]]; then

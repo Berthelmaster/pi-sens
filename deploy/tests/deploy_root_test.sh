@@ -87,11 +87,13 @@ test_cannot_read_root_only_file() {
 	make_binary "$case_dir/secret" v1.1.0
 	chmod 0600 "$case_dir/secret"
 	run_deploy "$case_dir/secret"
+	# Before anything else runs a binary: running "$bin --version" below adds
+	# a line to version-users too.
+	check "never ran it" equal "$(wc -l <"$STUB_STATE/version-users")" 0
 	check "exit status $status, want non-zero" test "$status" -ne 0
 	check "says it could not read the file" contains "$out" "could not read"
 	check "v1.0.0 still installed" equal "$("$bin" --version)" "pisens v1.0.0"
 	check "not restarted" equal "$(restarts)" 0
-	check "never ran it" equal "$(wc -l <"$STUB_STATE/version-users")" 0
 	check "caller $caller really cannot read it" caller_cannot_read "$case_dir/secret"
 }
 
