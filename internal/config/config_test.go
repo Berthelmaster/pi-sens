@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// testHash is a bcrypt hash of "pw".
+const testHash = "$2a$10$azHQ.jqYzZIyXkRa.ETdgeauf8sdkH.P0fxNsJ6DnqpKRaQXd7dzG"
+
 func envFrom(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
@@ -128,6 +131,29 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
+			name: "auth from env",
+			env:  map[string]string{EnvAuthUser: "admin", EnvAuthPasswordHash: testHash},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+				AuthUser:       "admin", AuthPasswordHash: testHash,
+			},
+		},
+		{
+			name: "auth flags win over env",
+			args: []string{"--auth-user", "pi", "--auth-password-hash", testHash},
+			env:  map[string]string{EnvAuthUser: "admin", EnvAuthPasswordHash: "$2a$10$fromtheenvironment"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				HistoryRawRetention: DefaultHistoryRawRetention, History1mRetention: DefaultHistory1mRetention, History15mRetention: DefaultHistory15mRetention,
+				NotifyCooldown: DefaultNotifyCooldown,
+				Prometheus:     true,
+				AuthUser:       "pi", AuthPasswordHash: testHash,
+			},
+		},
+		{
 			name: "empty watch services flag clears env",
 			args: []string{"--watch-services="},
 			env:  map[string]string{EnvWatchServices: "ssh"},
@@ -214,6 +240,12 @@ func TestLoadErrors(t *testing.T) {
 		{name: "path as watched service", env: map[string]string{EnvWatchServices: "/etc/systemd/ssh.service"}},
 		{name: "bad env prometheus", env: map[string]string{EnvPrometheus: "maybe"}},
 		{name: "positional args", args: []string{"extra"}},
+		{name: "auth user without hash", args: []string{"--auth-user", "admin"}},
+		{name: "auth hash without user", env: map[string]string{EnvAuthPasswordHash: testHash}},
+		{name: "auth user from env, hash flag cleared", args: []string{"--auth-password-hash="},
+			env: map[string]string{EnvAuthUser: "admin", EnvAuthPasswordHash: testHash}},
+		{name: "plain password as auth hash", env: map[string]string{EnvAuthUser: "admin", EnvAuthPasswordHash: "hunter2"}},
+		{name: "colon in auth user", args: []string{"--auth-user", "ad:min", "--auth-password-hash", testHash}},
 	}
 
 	for _, tt := range tests {

@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Berthelmaster/pi-sens/internal/auth"
 )
 
 // Defaults used when neither a flag nor an environment variable is set.
@@ -51,7 +53,9 @@ const (
 	EnvNotifyCooldown = "PISENS_NOTIFY_COOLDOWN"
 	EnvWatchServices  = "PISENS_WATCH_SERVICES"
 
-	EnvPrometheus = "PISENS_PROMETHEUS"
+	EnvPrometheus       = "PISENS_PROMETHEUS"
+	EnvAuthUser         = "PISENS_AUTH_USER"
+	EnvAuthPasswordHash = "PISENS_AUTH_PASSWORD_HASH"
 )
 
 // Config is the resolved runtime configuration.
@@ -88,6 +92,16 @@ type Config struct {
 	WatchServices []string
 	// Prometheus turns on GET /metrics in the Prometheus text format.
 	Prometheus bool
+	// AuthUser and AuthPasswordHash turn on HTTP basic auth for every route
+	// except /api/health. AuthPasswordHash is a bcrypt hash. Either both
+	// are set or neither; neither leaves the server open.
+	AuthUser         string
+	AuthPasswordHash string
+}
+
+// AuthEnabled reports whether basic auth is configured.
+func (c Config) AuthEnabled() bool {
+	return c.AuthUser != "" || c.AuthPasswordHash != ""
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -161,11 +175,19 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		}
 	}
 
+	cfg.AuthUser = getenv(EnvAuthUser)
+	cfg.AuthPasswordHash = getenv(EnvAuthPasswordHash)
+
 	watch := getenv(EnvWatchServices)
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
 	fs.SetOutput(output)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), "Usage: pisens [flags]\n"+
+			"       pisens hash-password    read a password from stdin and print its bcrypt hash\n\nFlags:\n")
+		fs.PrintDefaults()
+	}
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "HTTP listen address (env "+EnvListen+")")
 	fs.DurationVar(&cfg.Interval, "interval", cfg.Interval, "sample interval (env "+EnvInterval+")")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory (env "+EnvDataDir+")")
@@ -188,6 +210,10 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
 	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
 		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
+	fs.StringVar(&cfg.AuthUser, "auth-user", cfg.AuthUser,
+		"user name for HTTP basic auth; needs --auth-password-hash (env "+EnvAuthUser+")")
+	fs.StringVar(&cfg.AuthPasswordHash, "auth-password-hash", cfg.AuthPasswordHash,
+		"bcrypt hash of the basic auth password, from pisens hash-password; needs --auth-user (env "+EnvAuthPasswordHash+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
@@ -256,6 +282,16 @@ func (c Config) validate() error {
 	}
 	if err := checkURL(c.NotifyNtfy); err != nil {
 		errs = append(errs, fmt.Errorf("notify ntfy %w", err))
+	}
+	switch {
+	case c.AuthUser != "" && c.AuthPasswordHash == "":
+		errs = append(errs, errors.New("auth user is set without an auth password hash; set both or neither"))
+	case c.AuthUser == "" && c.AuthPasswordHash != "":
+		errs = append(errs, errors.New("auth password hash is set without an auth user; set both or neither"))
+	case c.AuthEnabled():
+		if err := auth.Validate(c.AuthUser, c.AuthPasswordHash); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	for _, name := range c.WatchServices {
 		if strings.ContainsAny(name, " \t/") {
