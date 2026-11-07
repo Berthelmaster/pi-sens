@@ -16,6 +16,7 @@ import (
 	"github.com/Berthelmaster/pi-sens/internal/config"
 	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
+	"github.com/Berthelmaster/pi-sens/internal/notify"
 	"github.com/Berthelmaster/pi-sens/internal/server"
 	"github.com/Berthelmaster/pi-sens/web"
 )
@@ -113,6 +114,23 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	evaluator := alerts.NewEvaluator(rules, logger)
 	alertSnaps, unsubscribeAlerts := sampler.Subscribe()
 	defer unsubscribeAlerts()
+
+	// Notifiers only subscribe, and only start a goroutine, when one is
+	// configured. They subscribe before the evaluator starts so the first
+	// transition is not missed.
+	dispatcher := newDispatcher(cfg, logger)
+	logger.Info("alert notifications", "notifiers", dispatcher.Describe(), "cooldown", cfg.NotifyCooldown.String())
+	dispatcherDone := make(chan struct{})
+	if dispatcher.Enabled() {
+		transitions, unsubscribeTransitions := evaluator.SubscribeTransitions()
+		defer unsubscribeTransitions()
+		go func() {
+			defer close(dispatcherDone)
+			dispatcher.Run(ctx, transitions)
+		}()
+	} else {
+		close(dispatcherDone)
+	}
 	evaluatorDone := make(chan struct{})
 	go func() {
 		evaluator.Run(ctx, alertSnaps)
@@ -129,6 +147,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		logger.Error("sampler failed", "err", serr)
 	}
 	<-evaluatorDone
+	<-dispatcherDone
 	if werr := <-writerDone; werr != nil {
 		logger.Error("history writer failed to save pending samples", "err", werr)
 	}
@@ -143,4 +162,20 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 
 	logger.Info("pisens stopped")
 	return 0
+}
+
+// newDispatcher creates the alert notifiers configured in cfg.
+func newDispatcher(cfg config.Config, logger *slog.Logger) *notify.Dispatcher {
+	var notifiers []notify.Notifier
+	if cfg.NotifyWebhook != "" {
+		notifiers = append(notifiers, notify.NewWebhook(cfg.NotifyWebhook))
+	}
+	if cfg.NotifyNtfy != "" {
+		notifiers = append(notifiers, notify.NewNtfy(cfg.NotifyNtfy))
+	}
+	hostname, err := os.Hostname()
+	if err != nil && len(notifiers) > 0 {
+		logger.Warn("hostname unknown; notifications leave it empty", "err", err)
+	}
+	return notify.New(notifiers, notify.Options{Cooldown: cfg.NotifyCooldown, Hostname: hostname, Logger: logger})
 }

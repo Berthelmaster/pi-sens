@@ -68,6 +68,9 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--history-1m-retention`  | `PISENS_HISTORY_1M_RETENTION`  | `168h` (7 days)   | How long 1 minute rollups are kept                        |
 | `--history-15m-retention` | `PISENS_HISTORY_15M_RETENTION` | `2160h` (90 days) | How long 15 minute rollups are kept                       |
 | `--alerts-file`           | `PISENS_ALERTS_FILE`           | (none)            | YAML file of alert rules that replaces the built-in rules |
+| `--notify-webhook`        | `PISENS_NOTIFY_WEBHOOK`        | (none)            | URL that alert notifications are POSTed to as JSON        |
+| `--notify-ntfy`           | `PISENS_NOTIFY_NTFY`           | (none)            | ntfy topic URL for alert notifications                    |
+| `--notify-cooldown`       | `PISENS_NOTIFY_COOLDOWN`       | `15m`             | Per-alert notification cooldown, `0` for none             |
 
 Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT or SIGTERM.
 
@@ -198,6 +201,27 @@ rules:
 `firing` lists critical alerts first, then the rest by when they fired. `resolved` holds the last 50 resolved alerts, newest first, each with a `resolved_at`. `value` is the series value at the alert's last state change, and `version` goes up every time the set changes. Pending alerts are not listed.
 
 The dashboard shows firing alerts in a banner under the header, critical ones in red and warnings in amber, and updates it live from the stream. The **Alerts** entry in the nav carries a count of the firing alerts and opens the ten most recent resolved ones. While a critical alert fires, the browser tab title starts with `(!)`. To try it, start pisens with a rules file whose threshold the Pi already crosses, for example `system.procs > 1`.
+
+### Notifications
+
+pisens can push alerts to a webhook, to [ntfy](https://ntfy.sh) or to both when they fire and when they resolve. Pending alerts are not sent. Set one or both of:
+
+- `--notify-webhook` (or `PISENS_NOTIFY_WEBHOOK`): every notification is POSTed to this URL as JSON:
+
+  ```json
+  {"alert":"cpu-temp-high","series":"temp.cpu_c","severity":"warning","op":">","value":78.5,"threshold":75,"state":"firing","hostname":"pi5","time":"2026-11-07T12:01:00Z"}
+  ```
+
+  `alert` is the rule name, `state` is `firing` or `resolved`, `value` is the series value when the alert fired or resolved and `time` is when that happened.
+- `--notify-ntfy` (or `PISENS_NOTIFY_NTFY`): a topic URL such as `https://ntfy.sh/my-pi-alerts`. The title reads `pi5: cpu-temp-high firing`, critical alerts are sent with urgent priority, warnings with high priority and resolves with the default one. For a protected topic put the credentials in the URL: `https://user:pass@ntfy.example.com/topic`.
+
+To keep a flapping alert from flooding your phone, each alert sends at most one firing notification per `--notify-cooldown` (default `15m`, `0` turns it off). A firing held back by the cooldown is sent when the cooldown ends if the alert is still firing, and a resolve is only sent for an alert whose firing was sent. Failed deliveries are retried up to five times with growing pauses; client errors such as `404` are not retried. Notifications are sent in the background, so a slow or unreachable endpoint never holds up the alerts or the dashboard.
+
+At startup pisens logs which notifiers are enabled, with only the scheme and host of each URL, since webhook URLs and ntfy topics often work as passwords. Try it with:
+
+```sh
+./bin/pisens --notify-ntfy https://ntfy.sh/some-long-random-topic
+```
 
 ### Adding a collector
 

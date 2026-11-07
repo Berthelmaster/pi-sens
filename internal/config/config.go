@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"time"
 )
 
@@ -25,6 +26,8 @@ const (
 	DefaultHistoryRawRetention = 24 * time.Hour
 	DefaultHistory1mRetention  = 7 * 24 * time.Hour
 	DefaultHistory15mRetention = 90 * 24 * time.Hour
+
+	DefaultNotifyCooldown = 15 * time.Minute
 )
 
 // Environment variable names.
@@ -40,6 +43,10 @@ const (
 	EnvHistory15mRetention = "PISENS_HISTORY_15M_RETENTION"
 
 	EnvAlerts = "PISENS_ALERTS_FILE"
+
+	EnvNotifyWebhook  = "PISENS_NOTIFY_WEBHOOK"
+	EnvNotifyNtfy     = "PISENS_NOTIFY_NTFY"
+	EnvNotifyCooldown = "PISENS_NOTIFY_COOLDOWN"
 )
 
 // Config is the resolved runtime configuration.
@@ -62,6 +69,15 @@ type Config struct {
 	// AlertsFile is a YAML file of alert rules that replaces the built-in
 	// ones. Empty means use the built-in rules.
 	AlertsFile string
+	// NotifyWebhook is a URL that gets alert notifications as JSON. Empty
+	// means no webhook.
+	NotifyWebhook string
+	// NotifyNtfy is an ntfy topic URL that gets alert notifications. Empty
+	// means no ntfy.
+	NotifyNtfy string
+	// NotifyCooldown is the shortest time between two firing notifications
+	// for the same alert. Zero turns the cooldown off.
+	NotifyCooldown time.Duration
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -85,6 +101,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		HistoryRawRetention: DefaultHistoryRawRetention,
 		History1mRetention:  DefaultHistory1mRetention,
 		History15mRetention: DefaultHistory15mRetention,
+
+		NotifyCooldown: DefaultNotifyCooldown,
 	}
 
 	// Invalid environment values are reported after the flags are parsed, so
@@ -105,6 +123,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		{EnvHistoryRawRetention, &cfg.HistoryRawRetention},
 		{EnvHistory1mRetention, &cfg.History1mRetention},
 		{EnvHistory15mRetention, &cfg.History15mRetention},
+		{EnvNotifyCooldown, &cfg.NotifyCooldown},
 	}
 	for _, d := range durations {
 		v := getenv(d.env)
@@ -119,6 +138,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		*d.dst = parsed
 	}
 	cfg.AlertsFile = getenv(EnvAlerts)
+	cfg.NotifyWebhook = getenv(EnvNotifyWebhook)
+	cfg.NotifyNtfy = getenv(EnvNotifyNtfy)
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
@@ -135,6 +156,12 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.DurationVar(&cfg.History15mRetention, "history-15m-retention", cfg.History15mRetention,
 		"how long 15 minute history averages are kept (env "+EnvHistory15mRetention+")")
 	fs.StringVar(&cfg.AlertsFile, "alerts-file", cfg.AlertsFile, "YAML file of alert rules that replaces the built-in rules (env "+EnvAlerts+")")
+	fs.StringVar(&cfg.NotifyWebhook, "notify-webhook", cfg.NotifyWebhook,
+		"URL to POST alert notifications to as JSON (env "+EnvNotifyWebhook+")")
+	fs.StringVar(&cfg.NotifyNtfy, "notify-ntfy", cfg.NotifyNtfy,
+		"ntfy topic URL for alert notifications, e.g. https://ntfy.sh/my-pi (env "+EnvNotifyNtfy+")")
+	fs.DurationVar(&cfg.NotifyCooldown, "notify-cooldown", cfg.NotifyCooldown,
+		"shortest time between two notifications that the same alert fires, 0 for none (env "+EnvNotifyCooldown+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
@@ -182,5 +209,27 @@ func (c Config) validate() error {
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data directory must not be empty"))
 	}
+	if c.NotifyCooldown < 0 {
+		errs = append(errs, fmt.Errorf("notify cooldown must not be negative, got %s", c.NotifyCooldown))
+	}
+	if err := checkURL(c.NotifyWebhook); err != nil {
+		errs = append(errs, fmt.Errorf("notify webhook %w", err))
+	}
+	if err := checkURL(c.NotifyNtfy); err != nil {
+		errs = append(errs, fmt.Errorf("notify ntfy %w", err))
+	}
 	return errors.Join(errs...)
+}
+
+// checkURL checks that a notification URL, if set, is an absolute http or
+// https URL. The error leaves the URL out because it may hold a secret.
+func checkURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return errors.New("must be an http:// or https:// URL")
+	}
+	return nil
 }
