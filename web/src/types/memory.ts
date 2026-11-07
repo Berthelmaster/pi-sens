@@ -58,7 +58,7 @@ export function memorySection(
 }
 
 /** A positive finite number field, or 0. */
-export function num(v: unknown): number {
+export function positive(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
 }
 
@@ -81,10 +81,10 @@ export interface Segment {
  * The legend shows the real values.
  */
 export function memoryBreakdown(mem: Partial<MemorySection>): Segment[] {
-  const total = num(mem.total_bytes)
-  const used = num(mem.used_bytes)
-  const free = num(mem.free_bytes)
-  const cache = num(mem.buffers_bytes) + num(mem.cached_bytes)
+  const total = positive(mem.total_bytes)
+  const used = positive(mem.used_bytes)
+  const free = positive(mem.free_bytes)
+  const cache = positive(mem.buffers_bytes) + positive(mem.cached_bytes)
   const share = (b: number) => (total > 0 ? (b / total) * 100 : 0)
 
   const usedPct = Math.min(100, share(used))
@@ -122,9 +122,9 @@ export function zramSwapSummary(
   let memUsedBytes = 0
   const algorithms = new Set<string>()
   for (const d of swap) {
-    origBytes += num(d.orig_data_bytes)
-    comprBytes += num(d.compr_data_bytes)
-    memUsedBytes += num(d.mem_used_bytes)
+    origBytes += positive(d.orig_data_bytes)
+    comprBytes += positive(d.compr_data_bytes)
+    memUsedBytes += positive(d.mem_used_bytes)
     if (typeof d.algorithm === 'string' && d.algorithm)
       algorithms.add(d.algorithm)
   }

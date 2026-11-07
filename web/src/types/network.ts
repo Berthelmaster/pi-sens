@@ -1,4 +1,4 @@
-import { formatBitsPerSecond, PLACEHOLDER } from '../lib/format'
+import { formatBitsPerSecond, num, PLACEHOLDER } from '../lib/format'
 import {
   isCollectorError,
   type CollectorError,
@@ -120,11 +120,6 @@ export function netinfoSection(
 ): Partial<NetinfoSection> | CollectorError | undefined {
   return section(snap, 'netinfo') as
     Partial<NetinfoSection> | CollectorError | undefined
-}
-
-/** A finite number, or undefined. */
-export function num(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
 
 /** A non-empty trimmed string, or undefined. */

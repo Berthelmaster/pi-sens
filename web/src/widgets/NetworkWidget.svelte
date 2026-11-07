@@ -9,6 +9,7 @@
     formatBytes,
     formatHz,
     formatPercent,
+    num,
     PLACEHOLDER,
   } from '../lib/format'
   import { seriesHistory, snapshot, type SeriesHistory } from '../lib/live'
@@ -19,7 +20,6 @@
     netinfoSection,
     networkSection,
     niceCeil,
-    num,
     okSection,
     SIGNAL_BARS,
     signalBars,

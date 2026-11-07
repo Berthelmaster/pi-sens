@@ -1,13 +1,12 @@
 <script lang="ts">
   import Card, { type CardStatus } from '../components/Card.svelte'
   import Sparkline from '../components/Sparkline.svelte'
-  import { formatHz } from '../lib/format'
+  import { formatHz, num } from '../lib/format'
   import { seriesHistory, snapshot } from '../lib/live'
   import {
     EXT5V_WARN_V,
     formatVolts,
     formatWatts,
-    num,
     piHealthStatus,
     POWER_SERIES,
     powerSection,
