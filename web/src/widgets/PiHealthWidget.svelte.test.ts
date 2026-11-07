@@ -3,7 +3,11 @@ import { tick } from 'svelte'
 import type { Writable } from 'svelte/store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { snapshot as mockedSnapshot } from '../lib/live'
-import type { PowerSection, ThrottleSection } from '../types/pihealth'
+import type {
+  PowerSection,
+  RtcSection,
+  ThrottleSection,
+} from '../types/pihealth'
 import type { Snapshot } from '../types/snapshot'
 import PiHealthWidget from './PiHealthWidget.svelte'
 
@@ -49,10 +53,10 @@ const power: PowerSection = {
 const today = new Date()
 today.setHours(14, 2, 0, 0)
 
-function show(throttle: ThrottleSection) {
+function show(throttle: ThrottleSection, rtc?: RtcSection) {
   live.set({
     timestamp: '2026-11-07T14:05:00Z',
-    collectors: { throttle, power },
+    collectors: rtc ? { throttle, power, rtc } : { throttle, power },
     series: {},
   })
   return tick()
@@ -113,5 +117,83 @@ describe('PiHealthWidget power supply', () => {
 
     expect(screen.queryByText('Power supply:')).toBeNull()
     expect(screen.getByText('Under-voltage:')).toBeTruthy()
+  })
+})
+
+describe('PiHealthWidget RTC battery', () => {
+  beforeEach(() => live.set(null))
+
+  const clear: ThrottleSection = {
+    available: true,
+    raw: '0x0',
+    flags: { ...flags, under_voltage_occurred: false },
+  }
+
+  /** The card's status, from the data-status attribute of the Card. */
+  function cardStatus(): string | null | undefined {
+    return document.querySelector('[data-status]')?.getAttribute('data-status')
+  }
+
+  it('shows the voltage and that it is charging', async () => {
+    render(PiHealthWidget)
+    await show(clear, {
+      present: true,
+      rtc: 'rtc0',
+      battery: true,
+      battery_v: 3.021,
+      charging: true,
+      charging_voltage_v: 3,
+    })
+
+    expect(row('RTC battery:')).toBe('RTC battery: 3.02 V, charging')
+    expect(screen.getByText('charging').getAttribute('title')).toBe(
+      'Trickle charging to 3.00 V',
+    )
+    expect(screen.getByText('3.02 V').closest('dd')!.classList).not.toContain(
+      'low',
+    )
+    expect(cardStatus()).toBe('ok')
+  })
+
+  it('shows a low battery in amber', async () => {
+    render(PiHealthWidget)
+    await show(clear, {
+      present: true,
+      rtc: 'rtc0',
+      battery: true,
+      battery_v: 2.65,
+      charging: false,
+    })
+
+    expect(row('RTC battery:')).toBe('RTC battery: 2.65 V')
+    expect(screen.getByText('2.65 V').closest('dd')!.classList).toContain('low')
+    expect(cardStatus()).toBe('warning')
+  })
+
+  it('shows nothing without a battery or an RTC', async () => {
+    render(PiHealthWidget)
+    await show(clear, { present: true, rtc: 'rtc0', battery: false })
+    expect(screen.queryByText('RTC battery:')).toBeNull()
+
+    await show(clear, { present: false, battery: false })
+    expect(screen.queryByText('RTC battery:')).toBeNull()
+
+    await show(clear)
+    expect(screen.queryByText('RTC battery:')).toBeNull()
+  })
+
+  it('still shows the battery when vcgencmd is unavailable', async () => {
+    render(PiHealthWidget)
+    await show(
+      { available: false },
+      {
+        present: true,
+        battery: true,
+        battery_v: 3.1,
+      },
+    )
+
+    expect(screen.getByText(/vcgencmd unavailable/)).toBeTruthy()
+    expect(row('RTC battery:')).toBe('RTC battery: 3.10 V')
   })
 })
