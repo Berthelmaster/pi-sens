@@ -72,6 +72,8 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--notify-ntfy`           | `PISENS_NOTIFY_NTFY`           | (none)            | ntfy topic URL for alert notifications                    |
 | `--notify-cooldown`       | `PISENS_NOTIFY_COOLDOWN`       | `15m`             | Per-alert notification cooldown, `0` for none             |
 | `--watch-services`        | `PISENS_WATCH_SERVICES`        | (none)            | Comma separated systemd services to report the state of, e.g. `ssh,pisens` |
+| `--auth-user`             | `PISENS_AUTH_USER`             | (none)            | User name for HTTP basic auth, see [Authentication](#authentication) |
+| `--auth-password-hash`    | `PISENS_AUTH_PASSWORD_HASH`    | (none)            | bcrypt hash of the basic auth password, from `pisens hash-password` |
 
 Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT or SIGTERM.
 
@@ -253,6 +255,31 @@ At startup pisens logs which notifiers are enabled, with only the scheme and hos
 ```sh
 ./bin/pisens --notify-ntfy https://ntfy.sh/some-long-random-topic
 ```
+
+### Authentication
+
+The dashboard and API are open to anyone who can reach the port, which is fine on a trusted home network. To require a login, create a bcrypt hash of a password and give pisens both a user name and the hash:
+
+```sh
+./bin/pisens hash-password                  # asks for the password twice, without echoing it
+printf '%s\n' 'my password' | ./bin/pisens hash-password   # or read it from a pipe
+# $2a$10$...
+
+./bin/pisens --auth-user admin --auth-password-hash '$2a$10$...'
+```
+
+The hash contains `$` signs, so keep it in single quotes, in the shell and in `/etc/pisens/pisens.env` alike. `hash-password` drops one trailing newline from piped input and keeps everything else, spaces included. bcrypt only uses the first 72 bytes of a password, so longer ones are refused.
+
+With both set, every request needs HTTP basic auth except `GET /api/health`, which stays open for uptime checks. Wrong or missing credentials get a `401` with a `WWW-Authenticate: Basic realm="pisens"` challenge, and wrong ones are logged with the client address. pisens refuses to start if only one of the two settings is given, or if the hash is not a bcrypt hash, so a typo never leaves the dashboard open by accident. Without either setting nothing changes.
+
+In the browser you get a login prompt on the first page load. The browser then sends the credentials with every request to the same origin, including the dashboard's live `EventSource` stream, so nothing else needs setting up. `curl` takes them with `-u`:
+
+```sh
+curl -u admin localhost:8080/api/metrics
+curl -N -u admin localhost:8080/api/stream
+```
+
+Basic auth sends the password with every request, encoded but not encrypted, so anyone who can watch the traffic can read it. That is acceptable on your own LAN. To reach pisens from anywhere else, put it behind a reverse proxy that terminates TLS (Caddy, nginx or Traefik), or use a VPN such as WireGuard or Tailscale, and bind pisens to `127.0.0.1:8080` so only the proxy can reach it. If the proxy handles the login itself, leave pisens' auth off.
 
 ### Adding a collector
 

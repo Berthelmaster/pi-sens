@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Berthelmaster/pi-sens/internal/alerts"
+	"github.com/Berthelmaster/pi-sens/internal/auth"
 	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
@@ -23,6 +24,8 @@ const (
 	// writeTimeout bounds writing a response. Long-lived responses such as
 	// the SSE stream extend it per write with http.ResponseController.
 	writeTimeout = 30 * time.Second
+	// healthPath is the health endpoint, which basic auth leaves open.
+	healthPath = "/api/health"
 )
 
 // SnapshotSource provides the latest metrics snapshot and a feed of new ones.
@@ -59,6 +62,8 @@ type Server struct {
 	ui       fs.FS
 	logger   *slog.Logger
 	mux      *http.ServeMux
+	handler  http.Handler // mux, behind basic auth when that is on
+	auth     *auth.Basic  // nil leaves every route open
 	snapshot SnapshotSource
 	alerts   AlertSource      // nil turns off /api/alerts and alert events
 	history  HistorySource    // nil turns off /api/series and /api/history
@@ -70,13 +75,23 @@ type Server struct {
 	streamWriteTimeout time.Duration
 }
 
+// Option configures optional server behaviour in New.
+type Option func(*Server)
+
+// WithBasicAuth requires HTTP basic auth checked by b on every route except
+// /api/health, which stays open for uptime checks and monitoring. A nil
+// b leaves the server open, like leaving the option out.
+func WithBasicAuth(b *auth.Basic) Option {
+	return func(s *Server) { s.auth = b }
+}
+
 // New creates a server that listens on addr, reports version from the health
 // endpoint, serves metrics from snapshots and alerts from alertSource, and
 // serves the single-page app in ui at /. ui is normally web.Dist().
 // alertSource may be nil, which leaves out /api/alerts and the alert events.
 // historySource may be nil, which leaves out /api/series and /api/history.
 func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots SnapshotSource, alertSource AlertSource,
-	historySource HistorySource) *Server {
+	historySource HistorySource, opts ...Option) *Server {
 	s := &Server{
 		addr:     addr,
 		version:  version,
@@ -92,12 +107,19 @@ func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots Snapshot
 		heartbeatInterval:  heartbeatInterval,
 		streamWriteTimeout: streamWriteTimeout,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
 	s.routes()
+	s.handler = s.mux
+	if s.auth != nil {
+		s.handler = s.auth.Middleware(s.mux, healthPath)
+	}
 	return s
 }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	s.mux.HandleFunc("GET "+healthPath, s.handleHealth)
 	s.mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 	s.mux.HandleFunc("GET /api/stream", s.handleStream)
 	if s.alerts != nil {
@@ -113,7 +135,7 @@ func (s *Server) routes() {
 
 // Handler returns the server's root HTTP handler.
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return s.handler
 }
 
 // Run listens on the configured address and serves until ctx is cancelled,
@@ -129,7 +151,7 @@ func (s *Server) Run(ctx context.Context) error {
 // Serve is like Run but uses an existing listener.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	srv := &http.Server{
-		Handler:           s.mux,
+		Handler:           s.handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      s.writeTimeout,
 		// Request contexts derive from ctx, so long-lived handlers such as
