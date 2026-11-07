@@ -26,6 +26,7 @@ const (
 	EnvListen   = "PISENS_LISTEN"
 	EnvInterval = "PISENS_INTERVAL"
 	EnvDataDir  = "PISENS_DATA_DIR"
+	EnvAlerts   = "PISENS_ALERTS_FILE"
 )
 
 // Config is the resolved runtime configuration.
@@ -36,6 +37,9 @@ type Config struct {
 	Interval time.Duration
 	// DataDir is where pisens keeps persistent data.
 	DataDir string
+	// AlertsFile is a YAML file of alert rules that replaces the built-in
+	// ones. Empty means use the built-in rules.
+	AlertsFile string
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -64,6 +68,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if v := getenv(EnvDataDir); v != "" {
 		cfg.DataDir = v
 	}
+	cfg.AlertsFile = getenv(EnvAlerts)
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
@@ -71,6 +76,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "HTTP listen address (env "+EnvListen+")")
 	fs.DurationVar(&cfg.Interval, "interval", cfg.Interval, "sample interval (env "+EnvInterval+")")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory (env "+EnvDataDir+")")
+	fs.StringVar(&cfg.AlertsFile, "alerts-file", cfg.AlertsFile, "YAML file of alert rules that replaces the built-in rules (env "+EnvAlerts+")")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
