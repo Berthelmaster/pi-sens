@@ -1,0 +1,9 @@
+Name:	sh
+Umask:	0022
+State:	Z (sleeping)
+Tgid:	900
+Pid:	900
+PPid:	1
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000
+Threads:	1

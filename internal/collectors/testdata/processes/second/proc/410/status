@@ -1,0 +1,12 @@
+Name:	(sd-pam)
+Umask:	0022
+State:	S (sleeping)
+Tgid:	410
+Pid:	410
+PPid:	1
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000
+VmPeak:	  999999 kB
+VmRSS:	    1600 kB
+RssAnon:	    1234 kB
+Threads:	1
