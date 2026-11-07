@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FilesystemMount } from '../types/storage'
-import {
-  formatIops,
-  formatRate,
-  moreLabel,
-  storageStatus,
-  sumHistories,
-} from './storage'
+import { formatIops, formatRate, moreLabel, storageStatus } from './storage'
 
 function mount(used_pct?: number): FilesystemMount {
   return {
@@ -52,30 +46,6 @@ describe('storageStatus', () => {
     expect(storageStatus([mount(undefined), mount(20)])).toBe('ok')
     expect(storageStatus([mount(undefined)])).toBeUndefined()
     expect(storageStatus([])).toBeUndefined()
-  })
-})
-
-describe('sumHistories', () => {
-  it('adds values at matching times', () => {
-    expect(
-      sumHistories(
-        [
-          [1, 2, 3],
-          [10, 20, 30],
-        ],
-        [
-          [2, 3, 4],
-          [1, 2, 3],
-        ],
-      ),
-    ).toEqual([
-      [2, 3],
-      [21, 32],
-    ])
-  })
-
-  it('handles empty histories', () => {
-    expect(sumHistories([[], []], [[], []])).toEqual([[], []])
   })
 })
 

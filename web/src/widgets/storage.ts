@@ -4,7 +4,6 @@
 import type { CardStatus } from '../components/Card.svelte'
 import { gaugeStatus } from '../components/Gauge.svelte'
 import { formatBytes, PLACEHOLDER } from '../lib/format'
-import type { SeriesHistory } from '../lib/live'
 import type { FilesystemMount } from '../types/storage'
 
 /** A filesystem turns the card to warning at this used percentage. */
@@ -56,29 +55,6 @@ export function storageStatus(
     if (worst === undefined || rank[s] > rank[worst]) worst = s
   }
   return worst
-}
-
-/**
- * Adds two series histories sample by sample, e.g. read and write bytes
- * per second into total throughput. Only times present in both are kept;
- * the diskio collector always writes the two together.
- */
-export function sumHistories(
-  a: SeriesHistory,
-  b: SeriesHistory,
-): SeriesHistory {
-  const byTime = new Map<number, number>()
-  a[0].forEach((t, i) => byTime.set(t, a[1][i]))
-  const times: number[] = []
-  const values: number[] = []
-  b[0].forEach((t, i) => {
-    const v = byTime.get(t)
-    if (v !== undefined) {
-      times.push(t)
-      values.push(v + b[1][i])
-    }
-  })
-  return [times, values]
 }
 
 /** "3 more", "3 more (1 critical)", for the button that unfolds mounts. */
