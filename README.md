@@ -50,18 +50,37 @@ Before committing frontend changes run `npm run check` (svelte-check, tsc, Prett
 
 Every setting can be set with a flag or an environment variable. Flags win over environment variables.
 
-| Flag                 | Environment variable      | Default  | Description                                        |
-|----------------------|---------------------------|----------|----------------------------------------------------|
-| `--listen`           | `PISENS_LISTEN`           | `:8080`  | HTTP listen address                                |
-| `--interval`         | `PISENS_INTERVAL`         | `2s`     | Sample interval (Go duration)                      |
-| `--data-dir`         | `PISENS_DATA_DIR`         | `./data` | Directory for persistent data                      |
-| `--history-interval` | `PISENS_HISTORY_INTERVAL` | `10s`    | How often samples are saved to history             |
+| Flag                      | Environment variable           | Default           | Description                            |
+|---------------------------|--------------------------------|-------------------|----------------------------------------|
+| `--listen`                | `PISENS_LISTEN`                | `:8080`           | HTTP listen address                    |
+| `--interval`              | `PISENS_INTERVAL`              | `2s`              | Sample interval (Go duration)          |
+| `--data-dir`              | `PISENS_DATA_DIR`              | `./data`          | Directory for persistent data          |
+| `--history-interval`      | `PISENS_HISTORY_INTERVAL`      | `10s`             | How often samples are saved to history |
+| `--history-raw-retention` | `PISENS_HISTORY_RAW_RETENTION` | `24h`             | How long raw history samples are kept  |
+| `--history-1m-retention`  | `PISENS_HISTORY_1M_RETENTION`  | `168h` (7 days)   | How long 1 minute rollups are kept     |
+| `--history-15m-retention` | `PISENS_HISTORY_15M_RETENTION` | `2160h` (90 days) | How long 15 minute rollups are kept    |
 
 Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT or SIGTERM.
 
 ### History
 
 Every snapshot's `series` values are kept in a SQLite database at `<data-dir>/pisens.db`, created on startup (package `internal/history`). The driver is `modernc.org/sqlite`, which is pure Go, so the binary still builds with `CGO_ENABLED=0`. To spare the SD card, snapshots are buffered in memory and written in one transaction per history interval, with WAL and `synchronous=NORMAL`. Whatever is still buffered is written on shutdown. New series keys are added to the database automatically, so collectors need no extra code. Schema changes go in as new entries at the end of `migrations` in `internal/history/store.go`.
+
+Raw samples are downsampled into two rollup tables, `samples_1m` and `samples_15m`, with the average, minimum, maximum and sample count of every series per bucket. A background job runs every minute: it aggregates the buckets that have completed since its last run (raw into 1 minute, 1 minute into 15 minutes), then deletes rows past their retention, per series in batches of 500 so the writer never waits long for the lock. Its progress is stored in `rollup_state`, so a restart picks up where it left off and running it twice changes nothing. Samples that reach the database late (after a failed write was retried) get their buckets aggregated again. Rows the next level has not aggregated yet are never deleted, whatever the retention says. Durations are Go durations, so 7 days is `168h`.
+
+#### Database size
+
+The database stops growing once every table holds its full retention, because from then on the job deletes as many rows a minute as the writer adds and SQLite reuses the freed pages. With the defaults (2 second samples, 24h raw, 7 days of 1 minute and 90 days of 15 minute rollups) every series needs about:
+
+| Table         | Rows per series | Size per series |
+|---------------|-----------------|-----------------|
+| `samples_raw` | 43,200          | ~1.2 MB         |
+| `samples_1m`  | 10,080          | ~0.45 MB        |
+| `samples_15m` | 8,640           | ~0.4 MB         |
+
+The rollup sizes were measured with 50 series of random values. The raw figure is worked out from the same row layout (about 27 bytes a row against 45 for a rollup row). A Pi 5 has around 50 series (more with extra disks, mounts or network interfaces), which comes to roughly 100 MB, plus a WAL file of a few MB. Raw samples are the biggest part, so `--history-raw-retention` or a longer `--interval` is the knob to turn on a small SD card. Size scales linearly with each table's retention.
+
+pisens does not run `PRAGMA incremental_vacuum`. With steady deletes and inserts the free pages are reused within minutes, so returning them to the filesystem would only make SQLite grow the file again, which costs SD card writes for nothing. It would also need `auto_vacuum=INCREMENTAL`, which an existing database only gets from a full `VACUUM`. If you lower a retention a lot and want the space back, stop pisens and run `sqlite3 data/pisens.db VACUUM`.
 
 ### API
 
