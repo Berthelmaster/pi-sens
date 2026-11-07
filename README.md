@@ -50,13 +50,18 @@ Before committing frontend changes run `npm run check` (svelte-check, tsc, Prett
 
 Every setting can be set with a flag or an environment variable. Flags win over environment variables.
 
-| Flag         | Environment variable | Default  | Description                     |
-|--------------|----------------------|----------|---------------------------------|
-| `--listen`   | `PISENS_LISTEN`      | `:8080`  | HTTP listen address             |
-| `--interval` | `PISENS_INTERVAL`    | `2s`     | Sample interval (Go duration)   |
-| `--data-dir` | `PISENS_DATA_DIR`    | `./data` | Directory for persistent data   |
+| Flag                 | Environment variable      | Default  | Description                                        |
+|----------------------|---------------------------|----------|----------------------------------------------------|
+| `--listen`           | `PISENS_LISTEN`           | `:8080`  | HTTP listen address                                |
+| `--interval`         | `PISENS_INTERVAL`         | `2s`     | Sample interval (Go duration)                      |
+| `--data-dir`         | `PISENS_DATA_DIR`         | `./data` | Directory for persistent data                      |
+| `--history-interval` | `PISENS_HISTORY_INTERVAL` | `10s`    | How often samples are saved to history             |
 
 Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT or SIGTERM.
+
+### History
+
+Every snapshot's `series` values are kept in a SQLite database at `<data-dir>/pisens.db`, created on startup (package `internal/history`). The driver is `modernc.org/sqlite`, which is pure Go, so the binary still builds with `CGO_ENABLED=0`. To spare the SD card, snapshots are buffered in memory and written in one transaction per history interval, with WAL and `synchronous=NORMAL`. Whatever is still buffered is written on shutdown. New series keys are added to the database automatically, so collectors need no extra code. Schema changes go in as new entries at the end of `migrations` in `internal/history/store.go`.
 
 ### API
 

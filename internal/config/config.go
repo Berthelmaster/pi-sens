@@ -19,6 +19,8 @@ const (
 	DefaultListen   = ":8080"
 	DefaultInterval = 2 * time.Second
 	DefaultDataDir  = "./data"
+
+	DefaultHistoryInterval = 10 * time.Second
 )
 
 // Environment variable names.
@@ -26,6 +28,8 @@ const (
 	EnvListen   = "PISENS_LISTEN"
 	EnvInterval = "PISENS_INTERVAL"
 	EnvDataDir  = "PISENS_DATA_DIR"
+
+	EnvHistoryInterval = "PISENS_HISTORY_INTERVAL"
 )
 
 // Config is the resolved runtime configuration.
@@ -36,6 +40,9 @@ type Config struct {
 	Interval time.Duration
 	// DataDir is where pisens keeps persistent data.
 	DataDir string
+	// HistoryInterval is how often samples are written to the history
+	// database.
+	HistoryInterval time.Duration
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -49,6 +56,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		Listen:   DefaultListen,
 		Interval: DefaultInterval,
 		DataDir:  DefaultDataDir,
+
+		HistoryInterval: DefaultHistoryInterval,
 	}
 
 	if v := getenv(EnvListen); v != "" {
@@ -64,6 +73,13 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if v := getenv(EnvDataDir); v != "" {
 		cfg.DataDir = v
 	}
+	if v := getenv(EnvHistoryInterval); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvHistoryInterval, v, err)
+		}
+		cfg.HistoryInterval = d
+	}
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
@@ -71,6 +87,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.StringVar(&cfg.Listen, "listen", cfg.Listen, "HTTP listen address (env "+EnvListen+")")
 	fs.DurationVar(&cfg.Interval, "interval", cfg.Interval, "sample interval (env "+EnvInterval+")")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory (env "+EnvDataDir+")")
+	fs.DurationVar(&cfg.HistoryInterval, "history-interval", cfg.HistoryInterval,
+		"how often samples are written to the history database (env "+EnvHistoryInterval+")")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -91,6 +109,9 @@ func (c Config) validate() error {
 	}
 	if c.Interval <= 0 {
 		errs = append(errs, fmt.Errorf("interval must be positive, got %s", c.Interval))
+	}
+	if c.HistoryInterval <= 0 {
+		errs = append(errs, fmt.Errorf("history interval must be positive, got %s", c.HistoryInterval))
 	}
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data directory must not be empty"))

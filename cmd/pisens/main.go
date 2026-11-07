@@ -12,6 +12,7 @@ import (
 
 	_ "github.com/Berthelmaster/pi-sens/internal/collectors" // registers the collectors
 	"github.com/Berthelmaster/pi-sens/internal/config"
+	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 	"github.com/Berthelmaster/pi-sens/internal/server"
 	"github.com/Berthelmaster/pi-sens/web"
@@ -47,9 +48,27 @@ func run() int {
 		"listen", cfg.Listen,
 		"interval", cfg.Interval.String(),
 		"data_dir", cfg.DataDir,
+		"history_interval", cfg.HistoryInterval.String(),
 	)
 
+	store, err := history.Open(ctx, cfg.DataDir)
+	if err != nil {
+		logger.Error("open history database", "err", err)
+		return 1
+	}
+	logger.Info("history database opened", "path", store.Path())
+
 	sampler := metrics.NewSampler(metrics.Options{Interval: cfg.Interval, Logger: logger})
+
+	// Subscribe before the sampler starts so the first snapshot is stored too.
+	// The subscription closes when the sampler stops, which ends the writer
+	// after it has written what is still pending.
+	snaps, unsubscribe := sampler.Subscribe()
+	defer unsubscribe()
+	writer := history.NewWriter(store, cfg.HistoryInterval, logger)
+	writerDone := make(chan error, 1)
+	go func() { writerDone <- writer.Run(ctx, snaps) }()
+
 	samplerDone := make(chan error, 1)
 	go func() { samplerDone <- sampler.Run(ctx) }()
 
@@ -58,6 +77,12 @@ func run() int {
 	stop() // stop the sampler too if the server failed on its own
 	if serr := <-samplerDone; serr != nil {
 		logger.Error("sampler failed", "err", serr)
+	}
+	if werr := <-writerDone; werr != nil {
+		logger.Error("history writer failed to save pending samples", "err", werr)
+	}
+	if cerr := store.Close(); cerr != nil {
+		logger.Error("close history database", "err", cerr)
 	}
 	if err != nil {
 		logger.Error("server failed", "err", err)
