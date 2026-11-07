@@ -51,7 +51,6 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # There is no go.sum until the module gets its first dependency.
           cache-dependency-path: |
             go.mod
             go.sum

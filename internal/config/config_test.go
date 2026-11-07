@@ -30,25 +30,27 @@ func TestLoad(t *testing.T) {
 				EnvDataDir:  "/var/lib/pisens",
 
 				EnvHistoryInterval: "30s",
+				EnvAlerts:          "/etc/pisens/alerts.yaml",
 			},
-			want: Config{Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens", HistoryInterval: 30 * time.Second},
+			want: Config{Listen: "127.0.0.1:9000", Interval: 500 * time.Millisecond, DataDir: "/var/lib/pisens", HistoryInterval: 30 * time.Second, AlertsFile: "/etc/pisens/alerts.yaml"},
 		},
 		{
 			name: "flags only",
-			args: []string{"--listen", ":9090", "--interval=5s", "-data-dir", "/tmp/pisens", "--history-interval", "1m"},
-			want: Config{Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens", HistoryInterval: time.Minute},
+			args: []string{"--listen", ":9090", "--interval=5s", "-data-dir", "/tmp/pisens", "--history-interval", "1m", "--alerts-file", "rules.yaml"},
+			want: Config{Listen: ":9090", Interval: 5 * time.Second, DataDir: "/tmp/pisens", HistoryInterval: time.Minute, AlertsFile: "rules.yaml"},
 		},
 		{
 			name: "flags win over env",
-			args: []string{"--listen", ":9090", "--interval", "1m", "--history-interval", "20s"},
+			args: []string{"--listen", ":9090", "--interval", "1m", "--history-interval", "20s", "--alerts-file", "flag.yaml"},
 			env: map[string]string{
 				EnvListen:   ":7070",
 				EnvInterval: "10s",
 				EnvDataDir:  "/from/env",
 
 				EnvHistoryInterval: "5m",
+				EnvAlerts:          "env.yaml",
 			},
-			want: Config{Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second},
+			want: Config{Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second, AlertsFile: "flag.yaml"},
 		},
 	}
 

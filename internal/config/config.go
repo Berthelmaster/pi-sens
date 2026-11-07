@@ -30,6 +30,7 @@ const (
 	EnvDataDir  = "PISENS_DATA_DIR"
 
 	EnvHistoryInterval = "PISENS_HISTORY_INTERVAL"
+	EnvAlerts          = "PISENS_ALERTS_FILE"
 )
 
 // Config is the resolved runtime configuration.
@@ -43,6 +44,9 @@ type Config struct {
 	// HistoryInterval is how often samples are written to the history
 	// database.
 	HistoryInterval time.Duration
+	// AlertsFile is a YAML file of alert rules that replaces the built-in
+	// ones. Empty means use the built-in rules.
+	AlertsFile string
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -89,6 +93,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 			cfg.HistoryInterval = d
 		}
 	}
+	cfg.AlertsFile = getenv(EnvAlerts)
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
@@ -98,6 +103,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory (env "+EnvDataDir+")")
 	fs.DurationVar(&cfg.HistoryInterval, "history-interval", cfg.HistoryInterval,
 		"how often samples are written to the history database (env "+EnvHistoryInterval+")")
+	fs.StringVar(&cfg.AlertsFile, "alerts-file", cfg.AlertsFile, "YAML file of alert rules that replaces the built-in rules (env "+EnvAlerts+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
