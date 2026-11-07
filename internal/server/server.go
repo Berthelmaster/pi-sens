@@ -135,7 +135,7 @@ func (s *Server) routes() {
 	}
 	s.mux.HandleFunc("GET /metrics", s.handlePrometheus)
 	// Everything else, including unknown /api paths, goes to the SPA handler.
-	s.mux.Handle("GET /", spaHandler{ui: s.ui, logger: s.logger})
+	s.mux.Handle("GET /", &spaHandler{ui: s.ui, logger: s.logger})
 }
 
 // Handler returns the server's root HTTP handler.
