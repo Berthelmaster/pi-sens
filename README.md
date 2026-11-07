@@ -73,8 +73,21 @@ A snapshot looks like this. Each collector has its own section; a collector that
 ```json
 {
   "timestamp": "2026-11-07T09:21:22.08Z",
-  "collectors": { "uptime": { "seconds": 334893.67, "boot_time": "2026-11-03T12:19:48Z" } },
-  "series": { "system.uptime_s": 334893.67 }
+  "collectors": {
+    "sysinfo": {
+      "hostname": "pi5",
+      "kernel": "6.12.47+rpt-rpi-2712",
+      "arch": "aarch64",
+      "os": "Debian GNU/Linux 13 (trixie)",
+      "board": { "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "6c1f0a3e9b52d8e4", "revision": "d04170", "total_ram_bytes": 8454066176 },
+      "boot_time": "2026-11-03T12:19:48Z",
+      "uptime_s": 334893.67,
+      "procs": 212,
+      "threads": 575,
+      "users": 1
+    }
+  },
+  "series": { "system.uptime_s": 334893.67, "system.procs": 212 }
 }
 ```
 
@@ -86,7 +99,7 @@ curl -N localhost:8080/api/stream
 
 ### Adding a collector
 
-Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions and `uptime.go` for a reference implementation.
+Collectors live in `internal/collectors`, one file each, and register themselves from `init()`. See `internal/collectors/doc.go` for the conventions, `cpufreq.go` for a small reference implementation and `cpu.go` for one that keeps state between samples.
 
 ## CI
 
