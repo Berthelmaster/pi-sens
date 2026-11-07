@@ -11,6 +11,29 @@ Each card on the Overview page is one component in this folder. The layout shell
 - Use the CSS variables from `web/src/styles/theme.css` for colours so the light and dark themes both work. Component styles stay in the component's `<style>` block.
 - Only edit `pages/Overview.svelte` to add or move a widget, not to build one.
 
+## Live data
+
+`web/src/lib/live.ts` holds one shared connection to `/api/stream`. Do not open your own.
+
+```svelte
+<script lang="ts">
+  import { formatPercent } from '../lib/format'
+  import { seriesHistory, snapshot } from '../lib/live'
+  import { isCollectorError } from '../types/snapshot'
+  import type { CpuSection } from '../types/cpu'
+
+  let cpu = $derived($snapshot?.collectors.cpu as CpuSection | undefined)
+  // [unix seconds[], values[]] for the last 5 minutes, ready for uPlot.
+  const usage = seriesHistory('cpu.usage_pct')
+</script>
+
+{formatPercent($snapshot?.series['cpu.usage_pct'])}
+```
+
+- `snapshot` is the latest snapshot, `null` until the first one arrives. A failed collector's section is `{ "error": "..." }`; check it with `isCollectorError`.
+- `seriesHistory(key)` keeps the last five minutes of one series key. Samples without the key are left out.
+- Format values with the helpers in `web/src/lib/format.ts` (`formatBytes`, `formatBitsPerSecond`, `formatPercent`, `formatDuration`, `formatTemp`, `formatHz`). They show `–` for a missing value, so series values can go straight in.
+
 ## Widgets
 
 | File                       | Area        | Types file             |
