@@ -70,7 +70,9 @@ func int64p(v int64) *int64       { return &v }
 func float64p(v float64) *float64 { return &v }
 
 // testdata/netinfo/wired is a Pi on Ethernet running Docker (docker0 and a
-// container's veth) and WireGuard, with Wi-Fi disabled.
+// container's veth) and WireGuard. Its onboard Wi-Fi is down and has the
+// all-zero line the kernel prints in /proc/net/wireless for an interface
+// that is not connected.
 func TestNetinfoWired(t *testing.T) {
 	addrs := fakeAddrs{addrs: map[string][]string{
 		"lo":          {"127.0.0.1/8", "::1/128"},
@@ -83,10 +85,10 @@ func TestNetinfoWired(t *testing.T) {
 	res, data := collectNetinfo(t, &netinfo{addrs: addrs}, "wired", runner)
 
 	if len(res.Series) != 0 {
-		t.Errorf("Series = %v, want none without Wi-Fi", res.Series)
+		t.Errorf("Series = %v, want none without a Wi-Fi link", res.Series)
 	}
 	if calls := runner.Calls(); len(calls) != 0 {
-		t.Errorf("ran %v, want no commands without Wi-Fi", calls)
+		t.Errorf("ran %v, want no commands without a Wi-Fi link", calls)
 	}
 
 	want := netinfoData{
@@ -104,6 +106,11 @@ func TestNetinfoWired(t *testing.T) {
 			{
 				Name: "wg0", OperState: "unknown", MTU: 1420, // no MAC
 				IPv4: []string{"10.0.0.2/24"}, IPv6: []string{},
+			},
+			{
+				// Wireless, but not connected: no Wi-Fi section.
+				Name: "wlan0", OperState: "down", MAC: "d8:3a:dd:12:34:57", MTU: 1500, Wireless: true,
+				IPv4: []string{}, IPv6: []string{},
 			},
 		},
 		DefaultGateway: &netinfoGateway{Address: "192.168.1.1", Interface: "eth0"},
@@ -271,6 +278,24 @@ func TestNetinfoWireless(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNetinfoWirelessNotConnected(t *testing.T) {
+	// The kernel lists every wireless interface; one without a current BSS
+	// gets zeroed stats and no "." update markers.
+	fsys := fstest.MapFS{"proc/net/wireless": {Data: []byte(
+		"Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n" +
+			" face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n" +
+			" wlan0: 0000    0     0     0        0      0      0      0      0        0\n" +
+			" wlan1: 0000   58.  -52.  -256        0      0      0      0      0        0\n")}}
+	got, err := netinfoReadWireless(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]netinfoWiFi{"wlan1": {SignalDBm: -52, LinkQuality: 58, QualityPct: 82.86}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v, want only the connected wlan1 %+v", got, want)
 	}
 }
 

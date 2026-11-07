@@ -32,10 +32,11 @@ func init() { metrics.Register(&netinfo{}) }
 //     per-container veth pairs are left out.
 //   - Addresses come from net.Interfaces (netlink), behind netinfoAddrSource
 //     so tests can fake them.
-//   - Signal, link quality and noise come from /proc/net/wireless, which only
-//     lists wireless interfaces that are connected. The SSID, BSSID and
-//     frequency come from `iw dev <iface> link`; when iw is not installed or
-//     fails they are simply left out.
+//   - Signal, link quality and noise come from /proc/net/wireless. It lists
+//     every wireless interface, but one that is not connected has an
+//     all-zero line and gets no Wi-Fi section. The SSID, BSSID and frequency
+//     come from `iw dev <iface> link`; when iw is not installed or fails they
+//     are simply left out.
 //   - The default gateway is the default route with the lowest metric in
 //     /proc/net/route.
 //
@@ -60,9 +61,10 @@ type netinfoAddrSource interface {
 // found.
 const netinfoIwRetry = 5 * time.Minute
 
-// netinfoMaxQuality is the maximum link quality in /proc/net/wireless. Every
-// cfg80211 driver (brcmfmac on the Pi included) reports dBm signals and
-// derives the quality as signal + 110, clamped to 0..70.
+// netinfoMaxQuality is the maximum link quality in /proc/net/wireless for
+// cfg80211 drivers (brcmfmac on the Pi included), which derive it from the
+// dBm signal as signal + 110, clamped to 0..70. Old wireless extensions
+// drivers may use another maximum; the percentage is clamped to 100.
 const netinfoMaxQuality = 70
 
 const netinfoSysDir = "sys/class/net"
@@ -253,7 +255,13 @@ func netinfoReadInterface(fsys fs.FS, name string) (iface netinfoInterface, ok b
 //	 face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22
 //	 wlan0: 0000   58.  -52.  -256        0      0      0      0      0        0
 //
-// A trailing "." marks a value updated since the last read. The file is
+// A trailing "." marks a value updated since the last read. Every wireless
+// interface is listed, but the kernel prints zeroed stats for one without a
+// current BSS (down or not connected):
+//
+//	wlan0: 0000    0     0     0        0      0      0      0      0        0
+//
+// Those are left out, so only connected interfaces are returned. The file is
 // missing without wireless support, which yields no interfaces.
 func netinfoReadWireless(fsys fs.FS) (map[string]netinfoWiFi, error) {
 	b, err := fs.ReadFile(fsys, "proc/net/wireless")
@@ -284,6 +292,9 @@ func netinfoReadWireless(fsys fs.FS) (map[string]netinfoWiFi, error) {
 			vals[i] = v
 		}
 		link, level, noise := vals[0], vals[1], vals[2]
+		if link == 0 && level == 0 && noise == 0 {
+			continue // not connected
+		}
 
 		// Old wireless extensions drivers report dBm as an unsigned byte
 		// (216 for -40 dBm).
@@ -356,8 +367,8 @@ func netinfoParseIwLink(out []byte, w *netinfoWiFi) {
 		val = strings.TrimSpace(val)
 		switch key {
 		case "SSID":
-			// Not val: an SSID may start with spaces.
-			w.SSID = netinfoUnescapeSSID(strings.TrimPrefix(line[len("SSID:"):], " "))
+			// Trimming is safe: iw escapes leading and trailing spaces as \x20.
+			w.SSID = netinfoUnescapeSSID(val)
 		case "freq":
 			// Newer iw prints fractional frequencies such as "5180.0".
 			if f, err := strconv.ParseFloat(val, 64); err == nil {
