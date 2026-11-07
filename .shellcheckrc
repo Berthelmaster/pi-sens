@@ -1,0 +1,2 @@
+# Follow files that scripts source, such as deploy/tests/lib.sh.
+external-sources=true
