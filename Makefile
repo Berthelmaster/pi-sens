@@ -12,7 +12,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 # ./path relative to the module root. CI reads the list with `make -s go-packages`.
 GOPKGS = $(shell $(GO) list -e -f '.{{slice .Dir (len .Root)}}' ./... | grep -v -E '/node_modules(/|$$)')
 
-.PHONY: build build-arm64 web web-check test vet lint go-packages shellcheck run clean
+.PHONY: build build-arm64 web web-check test vet lint fmt go-packages shellcheck run clean
 
 ## build: build the frontend and pisens for the host into bin/pisens
 build: web
@@ -42,9 +42,13 @@ test: vet
 vet:
 	$(GO) vet $(GOPKGS)
 
-## lint: run golangci-lint with .golangci.yml (needs golangci-lint v2 on PATH)
+## lint: run golangci-lint with .golangci.yml, which also checks gofmt formatting (needs golangci-lint v2 on PATH)
 lint:
 	golangci-lint run $(GOPKGS)
+
+## fmt: format the Go code with the formatters in .golangci.yml (needs golangci-lint v2 on PATH)
+fmt:
+	golangci-lint fmt $(GOPKGS)
 
 ## go-packages: print the Go package directories that vet, test and lint cover
 go-packages:
