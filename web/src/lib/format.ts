@@ -13,6 +13,14 @@ function isNumber(v: Value): v is number {
 }
 
 /**
+ * Narrows an untyped snapshot field to a finite number, or undefined for
+ * anything else (missing, null, NaN, Infinity, strings...).
+ */
+export function num(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+/**
  * Scales value down by step until it is below step and formats it with the
  * matching unit. Values in the base unit are shown without decimals.
  */

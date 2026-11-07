@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -244,6 +245,17 @@ func TestEvaluatorTimestamps(t *testing.T) {
 		`"pending_at":"2026-11-07T12:00:00Z","firing_at":"2026-11-07T12:00:30Z","resolved_at":"2026-11-07T12:00:45Z","for_s":30}`
 	if string(b) != want {
 		t.Errorf("JSON =\n%s\nwant\n%s", b, want)
+	}
+
+	// An encoder with HTML escaping off gets the op unescaped.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(r); err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(want, `\u003e`, ">", 1) + "\n"; buf.String() != want {
+		t.Errorf("unescaped JSON =\n%s\nwant\n%s", buf.String(), want)
 	}
 }
 

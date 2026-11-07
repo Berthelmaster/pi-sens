@@ -34,6 +34,10 @@ const (
 	DefaultNotifyCooldown = 15 * time.Minute
 
 	DefaultProcessCmdline = ProcessCmdlineRedacted
+
+	// DefaultNetSkip leaves out loopback and the veth pairs and bridges
+	// Docker creates.
+	DefaultNetSkip = "lo,veth*,docker*,br-*"
 )
 
 // ProcessCmdline values: how much of the process command lines the
@@ -67,6 +71,7 @@ const (
 	EnvNotifyCooldown = "PISENS_NOTIFY_COOLDOWN"
 	EnvWatchServices  = "PISENS_WATCH_SERVICES"
 	EnvProcessCmdline = "PISENS_PROCESS_CMDLINE"
+	EnvNetSkip        = "PISENS_NET_SKIP"
 
 	EnvPrometheus       = "PISENS_PROMETHEUS"
 	EnvAuthUser         = "PISENS_AUTH_USER"
@@ -109,6 +114,9 @@ type Config struct {
 	// snapshot shows: ProcessCmdlineOff, ProcessCmdlineRedacted or
 	// ProcessCmdlineFull.
 	ProcessCmdline string
+	// NetSkip are the network interfaces the network collector leaves out:
+	// names, or name prefixes when they end in "*". Empty means none.
+	NetSkip []string
 	// Prometheus turns on GET /metrics in the Prometheus text format.
 	Prometheus bool
 	// AuthUser and AuthPasswordHash turn on HTTP basic auth for every route
@@ -203,6 +211,10 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	cfg.AuthPasswordHash = getenv(EnvAuthPasswordHash)
 
 	watch := getenv(EnvWatchServices)
+	netSkip := DefaultNetSkip
+	if v := getenv(EnvNetSkip); v != "" {
+		netSkip = v
+	}
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
@@ -234,6 +246,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
 	fs.StringVar(&cfg.ProcessCmdline, "process-cmdline", cfg.ProcessCmdline,
 		"how much of the top processes' command lines to show: off (name only), redacted (secrets hidden) or full (env "+EnvProcessCmdline+")")
+	fs.StringVar(&netSkip, "net-skip", netSkip,
+		"comma separated network interfaces to leave out, names or prefixes ending in *; --net-skip= reports all (env "+EnvNetSkip+")")
 	fs.BoolVar(&cfg.Prometheus, "prometheus", cfg.Prometheus,
 		"serve metrics for Prometheus at /metrics; --prometheus=false turns it off (env "+EnvPrometheus+")")
 	fs.StringVar(&cfg.AuthUser, "auth-user", cfg.AuthUser,
@@ -255,6 +269,7 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		return Config{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
 	cfg.WatchServices = splitList(watch)
+	cfg.NetSkip = splitList(netSkip)
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -327,6 +342,11 @@ func (c Config) validate() error {
 	for _, name := range c.WatchServices {
 		if strings.ContainsAny(name, " \t/") {
 			errs = append(errs, fmt.Errorf("invalid service name %q in the watch list", name))
+		}
+	}
+	for _, p := range c.NetSkip {
+		if strings.ContainsAny(p, " \t/:") || strings.Contains(strings.TrimSuffix(p, "*"), "*") {
+			errs = append(errs, fmt.Errorf("invalid network interface %q in the skip list: want a name, or a prefix ending in *", p))
 		}
 	}
 	return errors.Join(errs...)

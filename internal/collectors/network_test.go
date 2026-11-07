@@ -215,6 +215,47 @@ func TestNetworkSkip(t *testing.T) {
 	}
 }
 
+// A custom list replaces the default: exact names and * prefixes, so lo and
+// docker0 stay out but Docker's veth and bridge interfaces are reported.
+func TestNetworkCustomSkip(t *testing.T) {
+	n := &network{skip: netSkipList([]string{"lo", "docker*", "usb0", "eth0.*"})}
+	res := collectNet(t, n, os.DirFS("testdata/network/first"), time.Time{}, netT0)
+	want := []string{"br-0123abcd", "eth0", "veth1a2b3c", "wlan0"}
+	if got := netNames(netDataOf(t, res)); !reflect.DeepEqual(got, want) {
+		t.Errorf("interfaces = %v, want %v", got, want)
+	}
+
+	for name, want := range map[string]bool{
+		"lo": true, "lo0": false, "docker0": true, "docker": true, "usb0": true, "usb1": false,
+		"eth0.100": true, "eth0": false, "eth1.100": false,
+	} {
+		if got := n.skip(name); got != want {
+			t.Errorf("skip(%q) = %v, want %v", name, got, want)
+		}
+	}
+
+	// An empty list skips nothing.
+	if netSkipList(nil)("lo") {
+		t.Error("netSkipList(nil) skips lo, want every interface reported")
+	}
+}
+
+func TestSetNetSkip(t *testing.T) {
+	defer func(old func(string) bool) { networkCollector.skip = old }(networkCollector.skip)
+
+	if !networkCollector.skip("veth1") || networkCollector.skip("cni0") {
+		t.Error("registered collector does not use the default skip list")
+	}
+	SetNetSkip([]string{"lo", "cni*", "virbr*", "tailscale0"})
+	for name, want := range map[string]bool{
+		"cni0": true, "virbr0": true, "tailscale0": true, "lo": true, "veth1": false, "docker0": false, "eth0": false,
+	} {
+		if got := networkCollector.skip(name); got != want {
+			t.Errorf("after SetNetSkip, skip(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestNetworkSeriesNames(t *testing.T) {
 	got := netSeriesNames(map[string]netCounters{
 		"eth0": {}, "eth0.100": {}, "eth0_100": {}, "total": {}, "WLAN-ap": {},

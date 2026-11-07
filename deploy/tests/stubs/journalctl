@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stub journalctl for the deploy.sh tests.
+echo "journalctl $*" >>"$STUB_STATE/calls"

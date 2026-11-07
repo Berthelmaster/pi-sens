@@ -7,6 +7,7 @@ import {
   formatHz,
   formatPercent,
   formatTemp,
+  num,
 } from './format'
 
 const formatters = [
@@ -139,4 +140,17 @@ describe('formatHz', () => {
   it('honours decimals', () => {
     expect(formatHz(1.56e9, 1)).toBe('1.6 GHz')
   })
+})
+
+describe('num', () => {
+  it.each([0, -3, 42.5, Number.MAX_VALUE])('keeps finite number %d', (v) => {
+    expect(num(v)).toBe(v)
+  })
+
+  it.each([undefined, null, NaN, Infinity, -Infinity, '42', '', true, {}, [1]])(
+    'drops %o',
+    (v) => {
+      expect(num(v)).toBeUndefined()
+    },
+  )
 })

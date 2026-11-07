@@ -1,4 +1,4 @@
-import { PLACEHOLDER } from '../lib/format'
+import { num, PLACEHOLDER } from '../lib/format'
 import type { CollectorError, Snapshot } from './snapshot'
 
 /**
@@ -167,11 +167,6 @@ export function piHealthStatus(
   if (badges.some((b) => b.state === 'active')) return 'critical'
   if (badges.length > 0 || supplyLow(ext5v)) return 'warning'
   return flags ? 'ok' : 'unknown'
-}
-
-/** A finite number, or undefined. */
-export function num(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
 }
 
 /** Formats a voltage, e.g. 5.0812 -> "5.08 V", 0.72 -> "0.720 V". */

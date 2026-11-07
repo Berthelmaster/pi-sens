@@ -12,7 +12,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 # ./path relative to the module root. CI reads the list with `make -s go-packages`.
 GOPKGS = $(shell $(GO) list -e -f '.{{slice .Dir (len .Root)}}' ./... | grep -v -E '/node_modules(/|$$)')
 
-.PHONY: build build-arm64 web web-check test vet lint fmt go-packages shellcheck run clean
+.PHONY: build build-arm64 web web-check test vet lint fmt go-packages shellcheck test-deploy run clean
 
 ## build: build the frontend and pisens for the host into bin/pisens
 build: web
@@ -54,9 +54,13 @@ fmt:
 go-packages:
 	@echo $(GOPKGS)
 
-## shellcheck: check the deploy scripts with shellcheck (needs shellcheck on PATH)
+## shellcheck: check the deploy scripts and their tests with shellcheck (needs shellcheck on PATH)
 shellcheck:
-	shellcheck deploy/*.sh
+	shellcheck deploy/*.sh deploy/tests/*.sh deploy/tests/stubs/*
+
+## test-deploy: test deploy/deploy.sh with stub systemctl and curl (no root needed)
+test-deploy:
+	deploy/tests/deploy_test.sh
 
 ## run: build and run pisens; pass flags with ARGS, e.g. make run ARGS='--listen :9090'
 run: build

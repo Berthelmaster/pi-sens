@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Stub curl for the deploy.sh tests: answers like /api/health of the running
+# fake service, or fails like a refused connection when it is not running.
+echo "curl ${*: -1}" >>"$STUB_STATE/calls"
+[[ -f $STUB_STATE/running ]] || exit 7
+printf '{"status":"ok","version":"%s"}\n' "$(cat "$STUB_STATE/running")"

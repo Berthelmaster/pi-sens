@@ -13,7 +13,20 @@ import (
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
-func init() { metrics.Register(&network{skip: netDefaultSkip}) }
+// networkCollector is the registered instance, kept so SetNetSkip can
+// configure it.
+var networkCollector = &network{skip: netDefaultSkip}
+
+func init() { metrics.Register(networkCollector) }
+
+// SetNetSkip sets the interfaces the network collector leaves out. Each
+// pattern is an interface name, or a name prefix when it ends in "*", e.g.
+// []string{"lo", "veth*", "docker*", "br-*"}. An empty list reports every
+// interface. The default skips loopback and Docker's interfaces. Call it
+// before the sampler starts.
+func SetNetSkip(patterns []string) {
+	networkCollector.skip = netSkipList(patterns)
+}
 
 // network reports throughput per network interface from /proc/net/dev.
 //
@@ -27,8 +40,9 @@ func init() { metrics.Register(&network{skip: netDefaultSkip}) }
 // simply no longer reported.
 //
 // The totals add up the interfaces that are reported, so loopback and the
-// virtual interfaces container runtimes create (skipped by default) are not
-// counted twice next to the physical interface their traffic leaves through.
+// virtual interfaces container runtimes create (skipped by default, see
+// SetNetSkip) are not counted twice next to the physical interface their
+// traffic leaves through.
 type network struct {
 	// skip reports whether an interface is left out entirely.
 	skip func(iface string) bool
@@ -36,12 +50,32 @@ type network struct {
 }
 
 // netDefaultSkip leaves out loopback and the per-container veth pairs and
-// bridges Docker creates.
-func netDefaultSkip(iface string) bool {
-	return iface == "lo" ||
-		strings.HasPrefix(iface, "veth") ||
-		strings.HasPrefix(iface, "docker") ||
-		strings.HasPrefix(iface, "br-")
+// bridges Docker creates. config.DefaultNetSkip is the same list.
+var netDefaultSkip = netSkipList([]string{"lo", "veth*", "docker*", "br-*"})
+
+// netSkipList returns a skip function for patterns that are interface names,
+// or name prefixes when they end in "*".
+func netSkipList(patterns []string) func(iface string) bool {
+	exact := map[string]bool{}
+	var prefixes []string
+	for _, p := range patterns {
+		if prefix, ok := strings.CutSuffix(p, "*"); ok {
+			prefixes = append(prefixes, prefix)
+		} else {
+			exact[p] = true
+		}
+	}
+	return func(iface string) bool {
+		if exact[iface] {
+			return true
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(iface, p) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 type networkData struct {
