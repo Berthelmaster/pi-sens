@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Berthelmaster/pi-sens/internal/alerts"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
 )
 
@@ -21,13 +22,21 @@ const (
 )
 
 // handleStream sends snapshots as Server-Sent Events: the latest one right
-// away, then one "snapshot" event per sample. It returns when the client goes
-// away, the server shuts down or the snapshot source stops.
+// away, then one "snapshot" event per sample. With an alert source it also
+// sends the current alerts as an "alerts" event on connect and again whenever
+// they change. It returns when the client goes away, the server shuts down or
+// the snapshot source stops.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	// Subscribe before reading Latest so no sample falls in between. A sample
 	// that lands in both is skipped by the timestamp check below.
 	snaps, unsubscribe := s.snapshot.Subscribe()
 	defer unsubscribe()
+	var alertSets <-chan alerts.Set // stays nil without an alert source
+	if s.alerts != nil {
+		var unsubscribeAlerts func()
+		alertSets, unsubscribeAlerts = s.alerts.Subscribe()
+		defer unsubscribeAlerts()
+	}
 
 	rc := http.NewResponseController(w)
 	h := w.Header()
@@ -71,11 +80,36 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
+	// The alert set has the same race as snapshots, and the same fix: a set
+	// that was already sent is skipped by its version.
+	var alertsVersion uint64
+	alertsSent := false
+	sendAlerts := func(set alerts.Set) bool {
+		if alertsSent && set.Version <= alertsVersion {
+			return true
+		}
+		buf.Reset()
+		buf.WriteString("event: alerts\ndata: ")
+		if err := json.NewEncoder(&buf).Encode(set); err != nil {
+			s.logger.Warn("encode alerts for stream", "err", err)
+			return true
+		}
+		buf.WriteByte('\n')
+		if !write(buf.Bytes()) {
+			return false
+		}
+		alertsVersion, alertsSent = set.Version, true
+		return true
+	}
+
 	if snap, ok := s.snapshot.Latest(); ok {
 		if !sendSnapshot(snap) {
 			return
 		}
 	} else if !write(nil) { // send the headers now
+		return
+	}
+	if s.alerts != nil && !sendAlerts(s.alerts.Alerts()) {
 		return
 	}
 
@@ -90,6 +124,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !sendSnapshot(snap) {
+				return
+			}
+		case set, ok := <-alertSets:
+			if !ok {
+				// The alert source stopped; keep streaming snapshots.
+				alertSets = nil
+				continue
+			}
+			if !sendAlerts(set) {
 				return
 			}
 		case <-heartbeat.C:

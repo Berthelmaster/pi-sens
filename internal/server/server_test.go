@@ -79,7 +79,7 @@ func discardLogger() *slog.Logger {
 }
 
 func TestHealth(t *testing.T) {
-	s := New(":0", "1.2.3", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "1.2.3", testUI, discardLogger(), &fakeSource{}, nil)
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
@@ -102,7 +102,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestHealthRejectsOtherMethods(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/health", nil))
@@ -117,7 +117,7 @@ func TestServeShutsDownOnCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(ln.Addr().String(), "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(ln.Addr().String(), "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -150,7 +150,7 @@ func TestMetrics(t *testing.T) {
 		Collectors: map[string]any{"uptime": json.RawMessage(`{"seconds":42}`)},
 		Series:     map[string]float64{"system.uptime_s": 42},
 	}}
-	s := New(":0", "dev", testUI, discardLogger(), src)
+	s := New(":0", "dev", testUI, discardLogger(), src, nil)
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
@@ -175,7 +175,7 @@ func TestMetrics(t *testing.T) {
 }
 
 func TestMetricsBeforeFirstSample(t *testing.T) {
-	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{})
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil)
 
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))

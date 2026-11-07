@@ -38,6 +38,8 @@ const (
 	EnvHistoryRawRetention = "PISENS_HISTORY_RAW_RETENTION"
 	EnvHistory1mRetention  = "PISENS_HISTORY_1M_RETENTION"
 	EnvHistory15mRetention = "PISENS_HISTORY_15M_RETENTION"
+
+	EnvAlerts = "PISENS_ALERTS_FILE"
 )
 
 // Config is the resolved runtime configuration.
@@ -57,10 +59,17 @@ type Config struct {
 	HistoryRawRetention time.Duration
 	History1mRetention  time.Duration
 	History15mRetention time.Duration
+	// AlertsFile is a YAML file of alert rules that replaces the built-in
+	// ones. Empty means use the built-in rules.
+	AlertsFile string
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
 var ErrHelp = flag.ErrHelp
+
+// ErrVersion is returned when the user asked for the version with --version.
+// The caller prints it and exits.
+var ErrVersion = errors.New("version requested")
 
 // Load resolves the configuration from args (without the program name) and
 // the environment, looked up through getenv. Usage and parse errors are
@@ -78,6 +87,9 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		History15mRetention: DefaultHistory15mRetention,
 	}
 
+	// Invalid environment values are reported after the flags are parsed, so
+	// --help and --version still work with a broken environment file.
+	var envErrs []error
 	if v := getenv(EnvListen); v != "" {
 		cfg.Listen = v
 	}
@@ -101,10 +113,12 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		}
 		parsed, err := time.ParseDuration(v)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid %s %q: %w", d.env, v, err)
+			envErrs = append(envErrs, fmt.Errorf("invalid %s %q: %w", d.env, v, err))
+			continue
 		}
 		*d.dst = parsed
 	}
+	cfg.AlertsFile = getenv(EnvAlerts)
 
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
@@ -120,8 +134,16 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		"how long 1 minute history averages are kept (env "+EnvHistory1mRetention+")")
 	fs.DurationVar(&cfg.History15mRetention, "history-15m-retention", cfg.History15mRetention,
 		"how long 15 minute history averages are kept (env "+EnvHistory15mRetention+")")
+	fs.StringVar(&cfg.AlertsFile, "alerts-file", cfg.AlertsFile, "YAML file of alert rules that replaces the built-in rules (env "+EnvAlerts+")")
+	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
+		return Config{}, err
+	}
+	if *showVersion {
+		return Config{}, ErrVersion
+	}
+	if err := errors.Join(envErrs...); err != nil {
 		return Config{}, err
 	}
 	if fs.NArg() > 0 {
