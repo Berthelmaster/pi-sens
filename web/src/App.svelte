@@ -45,6 +45,11 @@
           label: 'Energy',
           load: () => import('./pages/EnergyDemo.svelte'),
         },
+        {
+          path: '/dev/netquality',
+          label: 'Internet health',
+          load: () => import('./pages/NetQualityDemo.svelte'),
+        },
       ]
     : []
 
