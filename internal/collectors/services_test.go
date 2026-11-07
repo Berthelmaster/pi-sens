@@ -60,6 +60,7 @@ func TestServicesJSON(t *testing.T) {
 			{Unit: "dphys-swapfile.service", Load: "loaded", Active: "failed", Sub: "failed",
 				Description: "dphys-swapfile - set up, mount/unmount, and delete a swap file"},
 			{Unit: "nfs-server.service", Load: "not-found", Active: "inactive", Sub: "dead", Description: "nfs-server.service"},
+			// The runner has no answer for systemctl show, so nginx falls back.
 			{Unit: "nginx.service", Load: "not-found", Active: "inactive", Sub: "dead"},
 		},
 	}
@@ -68,6 +69,164 @@ func TestServicesJSON(t *testing.T) {
 	}
 	if wantSeries := map[string]float64{"services.failed": 2}; !reflect.DeepEqual(res.Series, wantSeries) {
 		t.Errorf("Series = %v, want %v", res.Series, wantSeries)
+	}
+}
+
+// servicesShowCmd is the systemctl show line for the given unit names.
+func servicesShowCmd(names ...string) string {
+	return "systemctl show --property=Id,LoadState,ActiveState,SubState,Description " + strings.Join(names, " ")
+}
+
+func TestServicesShowsUnlistedWatchedUnits(t *testing.T) {
+	showCmd := servicesShowCmd("nginx.service", "sshd.service", "nginxx.service")
+	runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
+		servicesJSONCmd: {Output: servicesFixture(t, "list-units.json")},
+		showCmd:         {Output: servicesFixture(t, "show.txt")},
+	}}
+	s := &services{}
+	// nginx is installed but stopped and unloaded, sshd is an alias of
+	// ssh.service and nginxx is a typo.
+	s.setWatch([]string{"nginx", "ssh", "sshd", "nfs-server", "nginxx"})
+
+	res, err := s.Collect(context.Background(), servicesEnv(runner, 0))
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	got := res.Data.(servicesData)
+	wantWatched := []servicesUnit{
+		{Unit: "nginx.service", Load: "loaded", Active: "inactive", Sub: "dead",
+			Description: "A high performance web server and a reverse proxy server"},
+		{Unit: "ssh.service", Load: "loaded", Active: "active", Sub: "running", Description: "OpenBSD Secure Shell server"},
+		{Unit: "sshd.service", Load: "loaded", Active: "active", Sub: "running", Description: "OpenBSD Secure Shell server"},
+		// Listed by list-units, so not asked for again.
+		{Unit: "nfs-server.service", Load: "not-found", Active: "inactive", Sub: "dead", Description: "nfs-server.service"},
+		{Unit: "nginxx.service", Load: "not-found", Active: "inactive", Sub: "dead", Description: "nginxx.service"},
+	}
+	if !reflect.DeepEqual(got.Watched, wantWatched) {
+		t.Errorf("Watched = %+v\nwant %+v", got.Watched, wantWatched)
+	}
+	// The counts only cover what list-units reports.
+	if got.Active != 10 || got.Failed != 2 || got.Total != 16 {
+		t.Errorf("counts = active %d, failed %d, total %d; want 10, 2, 16", got.Active, got.Failed, got.Total)
+	}
+	if want := []string{servicesJSONCmd, showCmd}; !reflect.DeepEqual(runner.Calls(), want) {
+		t.Errorf("ran %q, want %q", runner.Calls(), want)
+	}
+
+	// show is part of the 30 s refresh, not run on every sample.
+	if _, err := s.Collect(context.Background(), servicesEnv(runner, 10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Collect(context.Background(), servicesEnv(runner, 30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{servicesJSONCmd, showCmd, servicesJSONCmd, showCmd}; !reflect.DeepEqual(runner.Calls(), want) {
+		t.Errorf("ran %q, want %q", runner.Calls(), want)
+	}
+}
+
+func TestServicesNoShowWhenNothingMissing(t *testing.T) {
+	for name, watch := range map[string][]string{
+		"no watch list": nil,
+		// nfs-server is listed even though it is not-found.
+		"all listed": {"ssh", "dphys-swapfile", "nfs-server"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
+				servicesJSONCmd: {Output: servicesFixture(t, "list-units.json")},
+			}}
+			s := &services{}
+			s.setWatch(watch)
+			res, err := s.Collect(context.Background(), servicesEnv(runner, 0))
+			if err != nil {
+				t.Fatalf("Collect() error = %v", err)
+			}
+			if w := res.Data.(servicesData).Watched; len(w) != len(watch) {
+				t.Errorf("Watched = %+v, want %d units", w, len(watch))
+			}
+			if want := []string{servicesJSONCmd}; !reflect.DeepEqual(runner.Calls(), want) {
+				t.Errorf("ran %q, want %q", runner.Calls(), want)
+			}
+		})
+	}
+}
+
+func TestServicesShowFailureFallsBack(t *testing.T) {
+	showCmd := servicesShowCmd("nginx.service", "foo.service")
+	tests := map[string]metrics.FakeResponse{
+		"command fails": {Err: errors.New("systemctl: exit status 1: Access denied")},
+		"too few units": {Output: "Id=nginx.service\nLoadState=loaded\nActiveState=inactive\nSubState=dead\n"},
+		"too many units": {Output: "LoadState=loaded\nActiveState=inactive\nSubState=dead\n\n" +
+			"LoadState=loaded\nActiveState=inactive\nSubState=dead\n\n" +
+			"LoadState=loaded\nActiveState=inactive\nSubState=dead\n"},
+		"missing state":   {Output: "Id=nginx.service\nLoadState=loaded\n\nId=foo.service\nLoadState=not-found\n"},
+		"unexpected line": {Output: "Unknown operation 'show'.\n"},
+		"empty output":    {Output: ""},
+	}
+	for name, resp := range tests {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLog(t)
+			runner := &metrics.FakeRunner{Responses: map[string]metrics.FakeResponse{
+				servicesJSONCmd: {Output: servicesFixture(t, "list-units.json")},
+				showCmd:         resp,
+			}}
+			s := &services{}
+			s.setWatch([]string{"ssh", "nginx", "foo"})
+			res, err := s.Collect(context.Background(), servicesEnv(runner, 0))
+			if err != nil {
+				t.Fatalf("Collect() error = %v", err)
+			}
+			want := []servicesUnit{
+				{Unit: "ssh.service", Load: "loaded", Active: "active", Sub: "running", Description: "OpenBSD Secure Shell server"},
+				{Unit: "nginx.service", Load: "not-found", Active: "inactive", Sub: "dead"},
+				{Unit: "foo.service", Load: "not-found", Active: "inactive", Sub: "dead"},
+			}
+			if got := res.Data.(servicesData); !reflect.DeepEqual(got.Watched, want) {
+				t.Errorf("Watched = %+v\nwant %+v", got.Watched, want)
+			}
+			if wantCalls := []string{servicesJSONCmd, showCmd}; !reflect.DeepEqual(runner.Calls(), wantCalls) {
+				t.Errorf("ran %q, want %q", runner.Calls(), wantCalls)
+			}
+			if logs.Len() != 0 {
+				t.Errorf("logged %q, want nothing at info level", logs)
+			}
+		})
+	}
+}
+
+// servicesCancelOnShow cancels the sample's context while systemctl show runs.
+type servicesCancelOnShow struct {
+	metrics.FakeRunner
+	cancel context.CancelFunc
+}
+
+func (r *servicesCancelOnShow) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "show" {
+		r.cancel()
+	}
+	return r.FakeRunner.Run(ctx, name, args...)
+}
+
+func TestServicesShowCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner := &servicesCancelOnShow{cancel: cancel}
+	runner.Responses = map[string]metrics.FakeResponse{
+		servicesJSONCmd:                  {Output: servicesFixture(t, "list-units.json")},
+		servicesShowCmd("nginx.service"): {Output: "LoadState=loaded\nActiveState=inactive\nSubState=dead\n"},
+	}
+	s := &services{}
+	s.setWatch([]string{"nginx"})
+	if _, err := s.Collect(ctx, servicesEnv(runner, 0)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Collect() error = %v, want context.Canceled", err)
+	}
+	// Not cached: the next sample runs systemctl again and gets the state.
+	res, err := s.Collect(context.Background(), servicesEnv(runner, time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := res.Data.(servicesData).Watched; len(w) != 1 || w[0].Load != "loaded" {
+		t.Errorf("Watched = %+v, want nginx.service loaded", w)
 	}
 }
 
