@@ -10,7 +10,7 @@ You need Go 1.23 or newer, Node 22 with npm, and `make`.
 make build          # frontend + host binary in bin/pisens
 make build-arm64    # frontend + static linux/arm64 binary for the Pi in bin/pisens-linux-arm64
 make web            # only build the frontend into web/dist (npm ci + npm run build)
-make web-check      # svelte-check, tsc and prettier --check on the frontend
+make web-check      # svelte-check, tsc, prettier --check and Vitest on the frontend
 make test           # go vet + go test
 make lint           # golangci-lint (v2, config in .golangci.yml)
 make run            # build and run; pass flags with ARGS='--listen :9090'
@@ -44,7 +44,7 @@ npm run dev                 # dev server on http://localhost:5173
 
 The shell lives in `web/src/App.svelte` (header, nav and a small History API router in `src/lib/router.svelte.ts`) with pages in `src/pages/`. Each Overview card is its own component in `src/widgets/`; see `web/src/widgets/README.md` before adding one. Theme colours are CSS variables in `src/styles/theme.css`.
 
-Before committing frontend changes run `npm run check` (svelte-check, tsc and Prettier) in `web/`. `npm run format` fixes formatting.
+Before committing frontend changes run `npm run check` (svelte-check, tsc, Prettier and the Vitest unit tests) in `web/`. `npm test` runs only the tests, `npm run format` fixes formatting.
 
 ### Configuration
 

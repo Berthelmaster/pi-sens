@@ -1,43 +1,57 @@
 <script lang="ts">
-  // Header slot for the backend connection state. For now it checks
-  // /api/health once; the live data task swaps this for the SSE stream state.
-  import { getHealth } from '../api'
+  // Header slot for the live stream state: a coloured dot and label, with
+  // the time since the last update in the tooltip.
+  import { formatDuration } from '../lib/format'
+  import { connection, type ConnectionState } from '../lib/live'
 
-  type State = 'connecting' | 'online' | 'offline'
-
-  let current = $state<State>('connecting')
-  let detail = $state('')
-
-  const label: Record<State, string> = {
+  const label: Record<ConnectionState, string> = {
     connecting: 'Connecting',
-    online: 'Online',
+    live: 'Live',
+    reconnecting: 'Reconnecting',
     offline: 'Offline',
   }
 
+  // Ticks every second so the "ago" text in the tooltip stays current.
+  let now = $state(Date.now())
   $effect(() => {
-    const ctrl = new AbortController()
-    getHealth(ctrl.signal)
-      .then((h) => {
-        current = 'online'
-        detail = `pisens ${h.version}`
-      })
-      .catch((err: unknown) => {
-        if (ctrl.signal.aborted) return
-        current = 'offline'
-        detail = err instanceof Error ? err.message : String(err)
-      })
-    return () => ctrl.abort()
+    const timer = setInterval(() => (now = Date.now()), 1000)
+    return () => clearInterval(timer)
+  })
+
+  function since(t: number): string {
+    return formatDuration(Math.max(0, (now - t) / 1000))
+  }
+
+  let detail = $derived.by(() => {
+    const { state, lastUpdate, retryAt } = $connection
+    const parts = [label[state]]
+    if (retryAt !== null && retryAt > now) {
+      parts.push(
+        `retrying in ${formatDuration(Math.ceil((retryAt - now) / 1000))}`,
+      )
+    }
+    parts.push(
+      lastUpdate === null
+        ? 'no data yet'
+        : `last update ${since(lastUpdate)} ago`,
+    )
+    return parts.join(' · ')
   })
 </script>
 
-<span class="status" data-state={current} title={detail} role="status">
+<span
+  class="status"
+  data-state={$connection.state}
+  title={detail}
+  role="status"
+>
   <span class="dot" aria-hidden="true"></span>
-  {label[current]}
+  {label[$connection.state]}
 </span>
 
 <style>
   .status {
-    --dot: var(--color-unknown);
+    --dot: var(--color-warning);
 
     display: inline-flex;
     align-items: center;
@@ -47,7 +61,7 @@
     white-space: nowrap;
   }
 
-  .status[data-state='online'] {
+  .status[data-state='live'] {
     --dot: var(--color-ok);
   }
   .status[data-state='offline'] {

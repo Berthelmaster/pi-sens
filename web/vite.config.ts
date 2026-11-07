@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { defineConfig, type Plugin } from 'vite'
 
@@ -26,5 +27,9 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
     },
+  },
+  test: {
+    include: ['src/**/*.test.ts'],
+    environment: 'node',
   },
 })

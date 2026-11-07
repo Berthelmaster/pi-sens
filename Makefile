@@ -23,7 +23,7 @@ web: web/node_modules/.package-lock.json
 web/node_modules/.package-lock.json: web/package.json web/package-lock.json
 	cd web && $(NPM) ci
 
-## web-check: type-check the frontend and check its formatting
+## web-check: type-check the frontend, check its formatting and run its unit tests
 web-check: web/node_modules/.package-lock.json
 	cd web && $(NPM) run check
 
