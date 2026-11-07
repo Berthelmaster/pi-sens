@@ -40,6 +40,11 @@
           label: 'Charts',
           load: () => import('./pages/ChartsDemo.svelte'),
         },
+        {
+          path: '/dev/energy',
+          label: 'Energy',
+          load: () => import('./pages/EnergyDemo.svelte'),
+        },
       ]
     : []
 
