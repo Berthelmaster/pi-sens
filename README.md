@@ -99,6 +99,8 @@ pisens does not run `PRAGMA incremental_vacuum`. With steady deletes and inserts
 | GET    | `/api/metrics` | Latest metrics snapshot (503 until the first sample) |
 | GET    | `/api/stream`  | Server-Sent Events: the latest snapshot on connect, then one per sample, plus the alerts on connect and whenever they change |
 | GET    | `/api/alerts`  | Firing alerts and the last 50 resolved ones |
+| GET    | `/api/series`  | Stored series keys, `?prefix=cpu.` for only some |
+| GET    | `/api/history` | History of up to 10 series, see [History API](#history-api) |
 
 Any other `GET` path serves the web UI. Files in `web/dist` are served as they are, and paths without a file extension fall back to `index.html` so client-side routes like `/history` work as deep links. Hashed files under `/assets/` are cached for a year; everything else is sent with `Cache-Control: no-cache`. Unknown `/api/...` paths return a JSON 404.
 
@@ -130,6 +132,32 @@ A snapshot looks like this. Each collector has its own section; a collector that
 ```sh
 curl -N localhost:8080/api/stream
 ```
+
+### History API
+
+`GET /api/series` lists every series key in the history database as `{"series": ["cpu.usage_pct", ...]}`, sorted. `?prefix=cpu.` returns only the keys starting with `cpu.`.
+
+`GET /api/history?series=cpu.usage_pct,temp.cpu_c&from=<unix>&to=<unix>&points=<n>` returns the values of up to 10 series between `from` (inclusive) and `to` (exclusive), both unix times in seconds:
+
+```json
+{
+  "resolution": "1m",
+  "step": 360,
+  "series": {
+    "cpu.usage_pct": { "t": [1762473600, 1762473960], "avg": [12.4, 9.8], "min": [3.1, 2.7], "max": [41.0, 30.2] },
+    "temp.cpu_c": { "t": [1762473600, 1762473960], "avg": [51.2, 50.9], "min": [50.1, 49.8], "max": [53.4, 52.7] }
+  }
+}
+```
+
+- `series` is a comma separated list and may also be repeated. A key without data in the range comes back with empty arrays.
+- `to` defaults to now, `points` to 500 (2 to 5000 allowed).
+- The range picks the table: raw samples up to 6 hours, 1 minute rollups up to 7 days, 15 minute rollups beyond. Rollup rows are only written once their bucket is complete, so the newest few minutes of a longer range are missing until then.
+- The rows are grouped into buckets of `step` seconds, a multiple of the table's resolution, so every series has at most `points` points. `t` is the start of each bucket. Buckets start at multiples of `step` since the epoch, so a chart that refreshes keeps the same buckets, and the first one can start a little before `from`.
+- `avg` is the average over the bucket, weighted by sample count, and `min`/`max` are the extremes. For raw samples with a `step` of 1 they are all the sample value.
+- Bad input (no `series`, more than 10, `from` missing or not before `to`, `points` out of range) returns 400 with `{"error": "..."}`.
+
+On a Raspberry Pi 5 with the default retention for 50 series (a 91 MB database), a 30 day query for 10 series takes 60–110 ms, measured with curl against the running binary.
 
 ### Alerts
 

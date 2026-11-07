@@ -29,7 +29,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		Logger:   logger,
 	})
 	sampler.Sample(context.Background())
-	srv := server.New(":0", "dev", web.Dist(), logger, sampler, nil)
+	srv := server.New(":0", "dev", web.Dist(), logger, sampler, nil, nil)
 
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
