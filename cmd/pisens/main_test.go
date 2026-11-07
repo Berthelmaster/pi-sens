@@ -17,12 +17,12 @@ import (
 )
 
 // TestMetricsEndpoint wires the registered collectors, the sampler and the
-// server together the way run does, with the uptime fixture as the root FS.
+// server together the way run does, with the Pi 5 sysinfo fixture as the root FS.
 func TestMetricsEndpoint(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	sampler := metrics.NewSampler(metrics.Options{
 		Interval: time.Second,
-		FS:       os.DirFS("../../internal/collectors/testdata/uptime"),
+		FS:       os.DirFS("../../internal/collectors/testdata/sysinfo/pi5"),
 		Runner:   &metrics.FakeRunner{},
 		Logger:   logger,
 	})
@@ -46,15 +46,15 @@ func TestMetricsEndpoint(t *testing.T) {
 	if body.Timestamp.IsZero() {
 		t.Error("timestamp is zero")
 	}
-	var up struct {
-		Seconds float64 `json:"seconds"`
+	var sys struct {
+		UptimeS float64 `json:"uptime_s"`
 		Error   string  `json:"error"`
 	}
-	if err := json.Unmarshal(body.Collectors["uptime"], &up); err != nil {
-		t.Fatalf("decode uptime section %s: %v", body.Collectors["uptime"], err)
+	if err := json.Unmarshal(body.Collectors["sysinfo"], &sys); err != nil {
+		t.Fatalf("decode sysinfo section %s: %v", body.Collectors["sysinfo"], err)
 	}
-	if up.Error != "" || up.Seconds != 354127.42 {
-		t.Errorf("uptime section = %s, want seconds 354127.42", body.Collectors["uptime"])
+	if sys.Error != "" || sys.UptimeS != 354127.42 {
+		t.Errorf("sysinfo section = %s, want uptime_s 354127.42", body.Collectors["sysinfo"])
 	}
 	if got := body.Series["system.uptime_s"]; got != 354127.42 {
 		t.Errorf("series system.uptime_s = %v, want 354127.42", got)

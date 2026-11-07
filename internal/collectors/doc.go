@@ -15,7 +15,7 @@
 //     os/exec directly, so tests can run anywhere.
 //
 //   - Test fixtures live in testdata/<name>/, laid out like the real root
-//     filesystem (testdata/uptime/proc/uptime). Tests point env.FS at them
+//     filesystem (testdata/sysinfo/pi5/proc/uptime). Tests point env.FS at them
 //     with os.DirFS and use metrics.FakeRunner for commands.
 //
 //   - Series keys are lowercase, dotted and end in a unit suffix:
@@ -29,5 +29,6 @@
 //   - Return an error rather than partial nonsense; the sampler shows it as
 //     {"error": "..."} in the collector's section and keeps the others.
 //
-// uptime.go is the reference implementation.
+// cpufreq.go is a small reference implementation; cpu.go shows one that keeps
+// state between samples.
 package collectors
