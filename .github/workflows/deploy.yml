@@ -1,18 +1,19 @@
 name: Deploy
 
 # Deploys main to the Raspberry Pi through the self-hosted runner on it: when
-# CI passes for a push to main, the job downloads that run's
-# pisens-linux-arm64 artifact and hands it to /usr/local/sbin/pisens-deploy
-# (deploy/deploy.sh), which swaps the binary, checks /api/health and rolls
-# back on failure. Running the workflow by hand (workflow_dispatch) redeploys
-# the newest successful CI build of main. See "Automatic deployment" in the
-# README for the one-time setup on the Pi.
+# CI passes for a push to main, the job checks out that commit, downloads the
+# run's pisens-linux-arm64 artifact and runs deploy/deploy.sh from the
+# checkout. The script runs itself with "sudo -n" (the runner user needs
+# passwordless sudo, which the Pi's first user has), installs pisens the first
+# time and updates it after that, checks /api/health and rolls back on
+# failure. Running the workflow by hand (workflow_dispatch) redeploys the
+# newest successful CI build of main. See "Automatic deployment" in the README.
 #
-# Never add pull_request or pull_request_target triggers here, and never give
-# another workflow the pisens label: whatever runs on that runner runs on the
-# Pi, and a pull request from a fork must not get there. workflow_run always
-# uses this file from main, and the job only runs for CI runs of pushes to
-# main in this repository.
+# Never add pull_request or pull_request_target triggers here, and never let
+# another workflow run on self-hosted: whatever runs on that runner runs on
+# the Pi with root rights, and a pull request from a fork must not get there.
+# workflow_run always uses this file from main, and the job only runs for CI
+# runs of pushes to main in this repository.
 on:
   workflow_run:
     workflows: [CI]
@@ -44,7 +45,9 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: [self-hosted, linux, ARM64, pisens]
+    # GitHub's default labels for a runner on a 64-bit Pi, so the runner needs
+    # no custom label.
+    runs-on: [self-hosted, linux, ARM64]
     timeout-minutes: 10
     steps:
       # Picks the CI run to deploy and checks that its artifact was built from
@@ -101,6 +104,14 @@ jobs:
             core.setOutput('run-url', run.html_url);
             core.setOutput('sha', run.head_sha);
 
+      # deploy.sh, install.sh and pisens.service from the commit being deployed.
+      - name: Check out the commit
+        if: steps.build.outputs.skip != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.build.outputs.sha }}
+          persist-credentials: false
+
       - name: Download the binary
         if: steps.build.outputs.skip != 'true'
         uses: actions/download-artifact@v8
@@ -110,9 +121,9 @@ jobs:
           run-id: ${{ steps.build.outputs.run-id }}
           github-token: ${{ github.token }}
 
-      # The runner user may run pisens-deploy as root and nothing else (see
-      # deploy/pisens-deploy.sudoers). -n fails at once instead of waiting
-      # for a password if that rule is missing.
+      # deploy.sh runs itself through "sudo -n", which fails at once instead
+      # of waiting for a password. Without passwordless sudo it stops before
+      # changing anything and says how to set it up.
       - name: Deploy
         if: steps.build.outputs.skip != 'true'
         env:
@@ -121,11 +132,13 @@ jobs:
           RUN_URL: ${{ steps.build.outputs.run-url }}
           COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ steps.build.outputs.sha }}
         run: |
-          sudo -n /usr/local/sbin/pisens-deploy --commit "$SHA" "$BINARY" | tee "$RUNNER_TEMP/pisens-deploy.log"
+          deploy/deploy.sh --commit "$SHA" "$BINARY" | tee "$RUNNER_TEMP/pisens-deploy.log"
           version=$(sed -n 's/^version: //p' "$RUNNER_TEMP/pisens-deploy.log")
+          result=$(sed -n 's/^result: *//p' "$RUNNER_TEMP/pisens-deploy.log")
           {
             echo "### Deployed pisens ${version} to the Pi"
             echo
+            echo "- Result: ${result}"
             echo "- Version: \`${version}\`"
             echo "- Commit: [\`${SHA:0:7}\`](${COMMIT_URL})"
             echo "- Build: ${RUN_URL}"

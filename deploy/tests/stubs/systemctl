@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Stub systemctl for the deploy.sh tests. "restart" starts whatever binary is
 # installed at STUB_BIN: the curl stub then reports its version, unless the
-# binary is marked to crash on startup.
+# binary is marked to crash on startup or the unit is marked broken.
+# "enable" and "is-enabled" keep their state in STUB_STATE/enabled.
 echo "systemctl $*" >>"$STUB_STATE/calls"
-if [[ $1 == restart ]]; then
-	if grep -q '^# mode: crash' "$STUB_BIN"; then
+case $1 in
+restart)
+	if grep -q '^# mode: crash' "$STUB_BIN" ||
+		{ [[ -n ${STUB_UNIT:-} ]] && grep -q '^# broken' "$STUB_UNIT"; }; then
 		rm -f "$STUB_STATE/running"
 	else
 		"$STUB_BIN" --version | sed 's/^pisens //' >"$STUB_STATE/running"
 	fi
-fi
+	;;
+enable) touch "$STUB_STATE/enabled" ;;
+is-enabled) [[ -f $STUB_STATE/enabled ]] ;;
+esac

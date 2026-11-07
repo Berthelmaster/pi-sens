@@ -23,7 +23,7 @@ make test           # go vet + go test
 make lint           # golangci-lint (v2, config in .golangci.yml), including gofmt
 make fmt            # format the Go code with gofmt through golangci-lint
 make shellcheck     # shellcheck on the deploy scripts and their tests
-make test-deploy    # test deploy/deploy.sh with stub systemctl and curl
+make test-deploy    # test deploy/deploy.sh with stub systemctl, useradd, sudo and curl
 make run            # build and run; pass flags with ARGS='--listen :9090'
 ```
 
@@ -363,7 +363,7 @@ The script:
 - creates a `pisens` system user (no login shell, no home) in the `video` group
 - installs the binary as `/usr/local/bin/pisens` and the unit as `/etc/systemd/system/pisens.service`
 - creates `/etc/pisens/pisens.env` from `deploy/pisens.env.example` the first time and never overwrites it after that; `/etc/pisens/pisens.env.example` is refreshed on every run so new settings show up
-- runs `systemctl daemon-reload` and `systemctl enable --now pisens`, then checks the service stayed up
+- runs `systemctl daemon-reload` if the unit changed and `systemctl enable --now pisens`, then checks the service stayed up
 
 The dashboard is then on http://raspberrypi.local:8080/. Check on the service with:
 
@@ -385,66 +385,39 @@ sudo -u pisens vcgencmd get_throttled
 
 **Hardening.** The service runs with `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `NoNewPrivileges=yes` and no capabilities. It can read `/proc`, `/sys` and `/dev/vcio` but write only to `/var/lib/pisens`. Because of `ProtectHome=yes`, a separate `/home` partition does not show correct usage on the Storage widget.
 
-**Uninstall.** `sudo deploy/install.sh --uninstall` stops and disables the service and removes the unit and binary (and the [deploy hook](#automatic-deployment), if installed). It keeps `/etc/pisens`, `/var/lib/pisens` and the `pisens` user; add `--purge` to remove those as well.
+**Uninstall.** `sudo deploy/install.sh --uninstall` stops and disables the service and removes the unit and binary. It keeps `/etc/pisens`, `/var/lib/pisens` and the `pisens` user; add `--purge` to remove those as well.
 
 ## Automatic deployment
 
-`.github/workflows/deploy.yml` deploys `main` to the Pi through a GitHub Actions self-hosted runner on the Pi itself. When CI passes for a push to `main`, the deploy job downloads that run's `pisens-linux-arm64` artifact (nothing is built on the Pi), checks it was built from the pushed commit and runs `/usr/local/sbin/pisens-deploy` (a copy of `deploy/deploy.sh`), which:
+`.github/workflows/deploy.yml` installs and updates pisens on the Pi through a GitHub Actions self-hosted runner on the Pi itself. When CI passes for a push to `main`, the deploy job checks out that commit, downloads the run's `pisens-linux-arm64` artifact (nothing is built on the Pi), checks it was built from the pushed commit and runs `deploy/deploy.sh` from the checkout. The script runs itself with `sudo -n`, reuses the functions of `install.sh` and can run any number of times:
 
-- keeps the current binary as `/usr/local/bin/pisens.prev` and renames the new one into place
-- restarts the service and polls `/api/health` for up to 30 seconds until it reports the new version
-- if it does not, puts `pisens.prev` back, restarts and fails, so the run goes red
-- prints the deployed version and commit, which also end up in the run's summary
+- creates the `pisens` user (in the `video` group), `/etc/pisens` and `/var/lib/pisens` if they are missing
+- creates `/etc/pisens/pisens.env` from the example only if it does not exist, so your settings are never overwritten
+- installs `pisens.service` from the repository, runs `daemon-reload` only when it changed and enables the service
+- keeps the current binary as `/usr/local/bin/pisens.prev`, renames the new one into place and restarts the service
+- polls `/api/health` for up to 30 seconds until it reports the new version; if it does not, puts the previous binary (and unit) back, restarts and fails, so the run goes red
+- prints what it did (`installed v1.2.0` or `updated v1.1.0 → v1.2.0`), the version and the commit, which also end up in the run's summary
 
-Red CI on `main` deploys nothing, and pull requests never reach the Pi: the workflow has no pull request trigger and the job only accepts CI runs of pushes to `main` in this repository. Deploys run one at a time, and a CI run that finishes after a newer commit already passed is skipped. To redeploy the newest successful build of `main`, run the workflow by hand from the Actions tab (Run workflow).
+Red CI on `main` deploys nothing, and pull requests never reach the Pi: the workflow has no pull request trigger and the job only accepts CI runs of pushes to `main` in this repository. Deploys run one at a time and are never cancelled half way, and a CI run that finishes after a newer commit already passed is skipped. To redeploy the newest successful build of `main`, run the workflow by hand from the Actions tab (Run workflow).
 
-The deploy only swaps the binary. A change to `pisens.service`, the settings example or `deploy.sh` itself needs `install.sh` again (step 3).
+### Setup
 
-### One-time setup on the Pi
-
-1. Install pisens as a service with `install.sh`, as in [Install on a Raspberry Pi](#install-on-a-raspberry-pi). That creates the service, the `pisens` user and `/etc/pisens/pisens.env`.
-
-2. Register the runner. Create a dedicated user for it, not root and not `pisens`, and keep it out of the `sudo` group:
-
-   ```sh
-   sudo useradd --create-home --shell /bin/bash gh-runner
-   ```
-
-   In the repository go to Settings → Actions → Runners → New self-hosted runner, pick Linux and ARM64, and run the download and `config.sh` commands it shows as `gh-runner` (`sudo -iu gh-runner`). Add the `pisens` label, which is what the deploy job asks for, so no other job lands on the Pi:
+1. On the Pi, add a self-hosted runner the standard way: in the repository go to Settings → Actions → Runners → New self-hosted runner, pick Linux and ARM64, and run the commands it shows as your normal user (the one you log in with), accepting the defaults in `./config.sh`. See GitHub's [Adding self-hosted runners](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
+2. Run it as a service, so it survives a reboot ([Configuring the self-hosted runner application as a service](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/configuring-the-self-hosted-runner-application-as-a-service)):
 
    ```sh
-   ./config.sh --url https://github.com/Berthelmaster/pi-sens --token <token> --name pi --labels pisens --unattended
-   ```
-
-   Then, back as your normal user, install the runner as a service that runs as `gh-runner`:
-
-   ```sh
-   cd /home/gh-runner/actions-runner
-   sudo ./svc.sh install gh-runner
+   cd ~/actions-runner
+   sudo ./svc.sh install
    sudo ./svc.sh start
    ```
 
-3. Install the deploy script as `/usr/local/sbin/pisens-deploy` (owned by root) and `/etc/sudoers.d/pisens-deploy`, which lets `gh-runner` run that script as root and nothing else. `install.sh` does both, together with a normal install, when given `--with-deploy-hook` (add `--runner-user NAME` if the runner user is not `gh-runner`):
+3. Push to `main`. The first deploy installs pisens; every later one updates it.
 
-   ```sh
-   sudo deploy/install.sh --with-deploy-hook --version latest
-   ```
+The runner needs no custom label (the job asks for `self-hosted`, `linux` and `ARM64`), and nothing has to be installed on the Pi beforehand. The `install.sh` steps in [Install on a Raspberry Pi](#install-on-a-raspberry-pi) still work for a Pi without a runner, and a Pi set up that way is simply updated by the first deploy.
 
-   Or by hand, from a checkout or release archive:
+**Note.** The runner user needs passwordless sudo, because the deploy installs a system service. The first user on Raspberry Pi OS and on Ubuntu cloud images has it; if `sudo -n true` fails for the runner user, the deploy stops before changing anything and prints how to set it up (a line like `USER ALL=(ALL) NOPASSWD: ALL` in `/etc/sudoers.d/`). Anything that runs on that runner runs as root on the Pi, so deploys only run for pushes to `main`, and anyone with write access to the repository can reach the Pi. If the repository is public, keep Settings → Actions → General → "Approval for running fork pull request workflows from contributors" at "Require approval for all outside collaborators".
 
-   ```sh
-   sudo install -o root -g root -m 0755 deploy/deploy.sh /usr/local/sbin/pisens-deploy
-   sudo install -o root -g root -m 0440 deploy/pisens-deploy.sudoers /etc/sudoers.d/pisens-deploy
-   sudo visudo -c
-   ```
-
-   `sudo -l -U gh-runner` should then list only `/usr/local/sbin/pisens-deploy`. The script reads the binary it is given with the caller's permissions and only ever runs it as `pisens`, so the rule does not let the runner read root's files or run its own code as root.
-
-4. If the repository is public, keep Settings → Actions → General → "Approval for running fork pull request workflows from contributors" at "Require approval for all outside collaborators". The deploy workflow has no pull request trigger, but this keeps a fork from running any workflow before someone has looked at it.
-
-Anyone who can push to the repository can run code on the runner (a workflow on a branch can ask for the `pisens` label), so the runner is as trusted as the people with write access.
-
-To go back to the previous binary by hand, run `sudo /usr/local/sbin/pisens-deploy /usr/local/bin/pisens.prev`. `sudo deploy/install.sh --uninstall` also removes the deploy script and the sudoers rule; remove the runner with `sudo ./svc.sh uninstall` and `./config.sh remove` in `/home/gh-runner/actions-runner`.
+To go back to the previous binary by hand, run `deploy/deploy.sh /usr/local/bin/pisens.prev` from a checkout on the Pi. Remove the runner with `sudo ./svc.sh uninstall` and `./config.sh remove` in `~/actions-runner`.
 
 ## CI
 
@@ -452,7 +425,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull request 
 
 - Frontend: `npm ci`, `npm run check` and `npm run build` in `web/`
 - Go: `go vet`, `golangci-lint` (which fails on Go code that is not gofmt-formatted) and `go test -race` on every package outside `web/node_modules` (`make -s go-packages` prints the list)
-- Shell scripts: `shellcheck` on `deploy/`, and the `deploy/deploy.sh` tests (`deploy/tests/`) with stub `systemctl` and `curl`
+- Shell scripts: `shellcheck` on `deploy/`, and the `deploy/deploy.sh` tests (`deploy/tests/`) with stub `systemctl`, `useradd`, `sudo` and health endpoint
 - A static `linux/arm64` build with the frontend embedded, uploaded as the `pisens-linux-arm64` artifact on the run page
 
 A new push to a pull request cancels that pull request's run in progress. Runs on `main` are never cancelled, so two quick merges each get their own result and artifact.

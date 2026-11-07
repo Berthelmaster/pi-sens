@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Stub usermod for the deploy.sh tests: handles "usermod -aG GROUPS USER" on
+# STUB_STATE/group.
+echo "usermod $*" >>"$STUB_STATE/calls"
+[[ $1 == -aG ]] || exit 2
+"$(dirname "$0")/add-to-groups" "$3" "$2"

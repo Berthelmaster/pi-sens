@@ -6,8 +6,6 @@
 #   sudo deploy/install.sh --uninstall       remove the service and binary
 #   sudo deploy/install.sh --uninstall --purge
 #                                            also remove config, data and user
-#   sudo deploy/install.sh --with-deploy-hook [BINARY | --version vX.Y.Z]
-#                                            also set up automatic deployment
 #
 # BINARY is the pisens binary to install. Without it the script looks for
 # pisens next to itself, then bin/pisens-linux-arm64 and bin/pisens in the
@@ -24,23 +22,32 @@
 # Running it again is safe. An upgrade replaces the binary and the unit,
 # keeps /etc/pisens/pisens.env and /var/lib/pisens, and restarts the service.
 #
-# --with-deploy-hook installs deploy/deploy.sh as /usr/local/sbin/pisens-deploy
-# and a sudoers rule that lets the GitHub Actions runner user (gh-runner, or
-# --runner-user) run it, and only it, as root. See "Automatic deployment" in
-# the README.
+# deploy/deploy.sh, which the automatic deployment runs, sources this file for
+# its functions; main only runs when the script is executed.
 set -euo pipefail
+
+# Prefix for every path below. Only deploy.sh sets it, for its tests, which
+# work on a fake root directory. Run directly the script ignores it.
+if (return 0 2>/dev/null); then
+	root=${root:-}
+else
+	root=""
+fi
+readonly root
 
 readonly name=pisens
 readonly repo=Berthelmaster/pi-sens
-readonly bin_dst=/usr/local/bin/pisens
-readonly prev_dst=/usr/local/bin/pisens.prev
-readonly hook_dst=/usr/local/sbin/pisens-deploy
-readonly sudoers_dst=/etc/sudoers.d/pisens-deploy
-readonly unit_dst=/etc/systemd/system/pisens.service
-readonly dropin_dir=/etc/systemd/system/pisens.service.d
-readonly conf_dir=/etc/pisens
-readonly env_dst=/etc/pisens/pisens.env
-readonly data_dir=/var/lib/pisens
+readonly bin_dst=$root/usr/local/bin/pisens
+readonly prev_dst=$root/usr/local/bin/pisens.prev
+readonly unit_dst=$root/etc/systemd/system/pisens.service
+readonly dropin_dir=$root/etc/systemd/system/pisens.service.d
+readonly conf_dir=$root/etc/pisens
+readonly env_dst=$root/etc/pisens/pisens.env
+readonly data_dir=$root/var/lib/pisens
+# The deploy hook of the first automatic deployment setup, which needed a
+# sudoers rule. Deploys no longer use it; --uninstall still removes it.
+readonly old_hook_dst=$root/usr/local/sbin/pisens-deploy
+readonly old_sudoers_dst=$root/etc/sudoers.d/pisens-deploy
 
 # BASH_SOURCE is empty when the script is piped into bash.
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
@@ -58,7 +65,6 @@ usage() {
 Usage: sudo $0 [BINARY]
        sudo $0 --version VERSION
        sudo $0 --uninstall [--purge]
-       sudo $0 --with-deploy-hook [--runner-user USER] [BINARY | --version VERSION]
 
 Installs BINARY as $bin_dst and runs it as the $name systemd service under
 its own system user. Without BINARY it looks for, in order:
@@ -72,14 +78,8 @@ Options:
                download release VERSION (e.g. v1.2.0, or latest for the newest
                non-pre-release) from github.com/$repo and install
                it instead of a local binary; needs curl
-  --with-deploy-hook
-               also install deploy/deploy.sh as $hook_dst and
-               $sudoers_dst, which lets the GitHub Actions runner
-               user run it as root for automatic deployment
-  --runner-user USER
-               the user the runner runs as (default gh-runner)
-  --uninstall  stop and disable the service, remove the unit, the binary and
-               the deploy hook; keeps $conf_dir, $data_dir and the $name user
+  --uninstall  stop and disable the service and remove the unit and the
+               binary; keeps $conf_dir, $data_dir and the $name user
   --purge      with --uninstall, also remove those
   -h, --help   show this help
 EOF
@@ -160,6 +160,15 @@ download_release() {
 	deploy_dir=$work_dir/$archive/deploy
 }
 
+# in_group reports whether user is a supplementary member of group.
+in_group() {
+	local members
+	members=$(getent group "$2" | cut -d: -f4)
+	[[ ,$members, == *",$1,"* ]]
+}
+
+# ensure_user creates the pisens system user in the video group, or adds an
+# existing one to that group.
 ensure_user() {
 	# Debian and Raspberry Pi OS always have the video group; create it so the
 	# unit's SupplementaryGroups=video does not stop the service elsewhere.
@@ -168,8 +177,8 @@ ensure_user() {
 		groupadd --system video
 	fi
 
-	if id -u "$name" >/dev/null 2>&1; then
-		if [[ " $(id -nG "$name") " != *" video "* ]]; then
+	if getent passwd "$name" >/dev/null; then
+		if ! in_group "$name" video; then
 			log "Adding user $name to group video"
 			usermod -aG video "$name"
 		fi
@@ -183,6 +192,41 @@ ensure_user() {
 		--home-dir "$data_dir" --no-create-home \
 		--shell "${nologin:-/usr/sbin/nologin}" \
 		--comment "pisens system monitor" "$name"
+}
+
+# ensure_dirs creates the settings and data directories. systemd hands the
+# data directory to the pisens user when the service starts (StateDirectory=).
+ensure_dirs() {
+	install -d -m 0755 "$conf_dir"
+	install -d -m 0750 "$data_dir"
+}
+
+# install_config refreshes pisens.env.example in the settings directory and
+# creates pisens.env from it the first time. An existing pisens.env is never
+# touched.
+install_config() {
+	install -m 0644 "$deploy_dir/pisens.env.example" "$conf_dir/pisens.env.example"
+	if [[ -e $env_dst ]]; then
+		log "Keeping existing $env_dst"
+	else
+		log "Creating $env_dst"
+		install -m 0600 "$deploy_dir/pisens.env.example" "$env_dst"
+	fi
+}
+
+# install_unit installs pisens.service from deploy_dir and sets unit_changed
+# to whether that changed the installed unit (and needs a daemon-reload).
+unit_changed=false
+install_unit() {
+	if [[ -f $unit_dst ]] && cmp -s -- "$deploy_dir/pisens.service" "$unit_dst"; then
+		log "$unit_dst is up to date"
+		unit_changed=false
+		return 0
+	fi
+	log "Installing $unit_dst"
+	install -d -m 0755 "$(dirname "$unit_dst")"
+	install -m 0644 "$deploy_dir/pisens.service" "$unit_dst"
+	unit_changed=true
 }
 
 install_binary() {
@@ -229,21 +273,14 @@ do_install() {
 	fi
 
 	ensure_user
+	ensure_dirs
 	install_binary "$src"
+	install_unit
+	install_config
 
-	log "Installing $unit_dst"
-	install -m 0644 "$deploy_dir/pisens.service" "$unit_dst"
-
-	install -d -m 0755 "$conf_dir"
-	install -m 0644 "$deploy_dir/pisens.env.example" "$conf_dir/pisens.env.example"
-	if [[ -e $env_dst ]]; then
-		log "Keeping existing $env_dst"
-	else
-		log "Creating $env_dst"
-		install -m 0600 "$deploy_dir/pisens.env.example" "$env_dst"
+	if $unit_changed; then
+		systemctl daemon-reload
 	fi
-
-	systemctl daemon-reload
 	systemctl enable --now "$name"
 	if $was_active; then
 		log "Restarting $name"
@@ -266,38 +303,6 @@ do_install() {
 	log "Logs:      journalctl -u $name -f"
 }
 
-# install_deploy_hook installs the deploy script and the sudoers rule that
-# lets runner_user run it as root.
-install_deploy_hook() {
-	local runner_user=$1
-	[[ -f $deploy_dir/deploy.sh ]] || die "$deploy_dir/deploy.sh is missing (releases before automatic deployment do not have it)"
-	[[ -f $deploy_dir/pisens-deploy.sudoers ]] || die "$deploy_dir/pisens-deploy.sudoers is missing"
-	command -v visudo >/dev/null || die "--with-deploy-hook needs sudo; install it with 'apt install sudo'"
-	if ! id -u "$runner_user" >/dev/null 2>&1; then
-		log "Warning: user $runner_user does not exist yet; create it before registering the runner"
-	fi
-
-	log "Installing $hook_dst"
-	local tmp
-	install -d -m 0755 "$(dirname "$hook_dst")"
-	tmp=$(mktemp "$hook_dst.XXXXXX")
-	install -o root -g root -m 0755 "$deploy_dir/deploy.sh" "$tmp"
-	mv -f "$tmp" "$hook_dst"
-
-	# sudo skips files in sudoers.d with a dot in the name, so the temporary
-	# file is never live, and a broken one never replaces a working rule.
-	log "Installing $sudoers_dst for user $runner_user"
-	install -d -m 0750 "$(dirname "$sudoers_dst")"
-	tmp=$(mktemp "$sudoers_dst.XXXXXX")
-	sed "s/^gh-runner /$runner_user /" "$deploy_dir/pisens-deploy.sudoers" >"$tmp"
-	chmod 0440 "$tmp"
-	if ! visudo -cqf "$tmp" >/dev/null; then
-		rm -f "$tmp"
-		die "the generated sudoers rule does not pass visudo -c"
-	fi
-	mv -f "$tmp" "$sudoers_dst"
-}
-
 do_uninstall() {
 	local purge=$1
 	if [[ -f $unit_dst ]]; then
@@ -316,9 +321,9 @@ do_uninstall() {
 		rm -f "$bin_dst"
 	fi
 	rm -f "$prev_dst"
-	if [[ -e $hook_dst || -e $sudoers_dst ]]; then
-		log "Removing the deploy hook ($hook_dst, $sudoers_dst)"
-		rm -f "$hook_dst" "$sudoers_dst"
+	if [[ -e $old_hook_dst || -e $old_sudoers_dst ]]; then
+		log "Removing the old deploy hook ($old_hook_dst, $old_sudoers_dst)"
+		rm -f "$old_hook_dst" "$old_sudoers_dst"
 	fi
 
 	if ! $purge; then
@@ -338,18 +343,11 @@ do_uninstall() {
 }
 
 main() {
-	local uninstall=false purge=false binary="" release="" hook=false runner_user=""
+	local uninstall=false purge=false binary="" release=""
 	while [[ $# -gt 0 ]]; do
 		case $1 in
 		--uninstall) uninstall=true ;;
 		--purge) purge=true ;;
-		--with-deploy-hook) hook=true ;;
-		--runner-user)
-			[[ $# -ge 2 && -n $2 ]] || die "--runner-user needs a user name"
-			runner_user=$2
-			shift
-			;;
-		--runner-user=*) runner_user=${1#--runner-user=} ;;
 		--version)
 			[[ $# -ge 2 && -n $2 ]] || die "--version needs a version, e.g. --version v0.1.0 or --version latest"
 			release=$2
@@ -384,17 +382,6 @@ main() {
 	if [[ -n $release && -n $binary ]]; then
 		die "give either a binary or --version, not both"
 	fi
-	if $hook && $uninstall; then
-		die "--with-deploy-hook does not work with --uninstall, which removes the hook"
-	fi
-	if [[ -n $runner_user ]] && ! $hook; then
-		die "--runner-user only works together with --with-deploy-hook"
-	fi
-	runner_user=${runner_user:-gh-runner}
-	[[ $runner_user =~ ^[a-z_][a-z0-9_-]*$ ]] || die "invalid user name $runner_user"
-	if [[ $runner_user == root || $runner_user == "$name" ]]; then
-		die "the runner must not run as $runner_user; use a dedicated user such as gh-runner"
-	fi
 	[[ $(id -u) -eq 0 ]] || die "run as root, e.g. sudo $0"
 	[[ -d /run/systemd/system ]] || die "systemd is not running on this machine"
 
@@ -406,9 +393,10 @@ main() {
 	else
 		do_install "$binary"
 	fi
-	if $hook; then
-		install_deploy_hook "$runner_user"
-	fi
 }
 
-main "$@"
+# Only when executed, not when deploy.sh sources this file. Piped into bash
+# counts as executed.
+if ! (return 0 2>/dev/null); then
+	main "$@"
+fi

@@ -113,7 +113,7 @@ jobs:
           mkdir -p "dist/${NAME}/deploy"
           cp bin/pisens README.md LICENSE "dist/${NAME}/"
           cp deploy/install.sh deploy/deploy.sh deploy/pisens.service deploy/pisens.env.example \
-            deploy/pisens-deploy.sudoers "dist/${NAME}/deploy/"
+            "dist/${NAME}/deploy/"
           tar -C dist --owner=0 --group=0 --numeric-owner -czf "dist/${NAME}.tar.gz" "${NAME}"
           tar -tzvf "dist/${NAME}.tar.gz"
 

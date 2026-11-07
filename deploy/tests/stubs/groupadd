@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Stub groupadd for the deploy.sh tests: adds the group to STUB_STATE/group.
+echo "groupadd $*" >>"$STUB_STATE/calls"
+echo "${*: -1}:x:900:" >>"$STUB_STATE/group"
