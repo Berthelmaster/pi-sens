@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"io"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -50,6 +51,29 @@ func TestLoad(t *testing.T) {
 			},
 			want: Config{Listen: ":9090", Interval: time.Minute, DataDir: "/from/env", HistoryInterval: 20 * time.Second},
 		},
+		{
+			name: "watch services from env",
+			env:  map[string]string{EnvWatchServices: " ssh, pisens.service,,nginx "},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				WatchServices: []string{"ssh", "pisens.service", "nginx"},
+			},
+		},
+		{
+			name: "watch services flag wins over env",
+			args: []string{"--watch-services", "cron"},
+			env:  map[string]string{EnvWatchServices: "ssh,nginx"},
+			want: Config{
+				Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second,
+				WatchServices: []string{"cron"},
+			},
+		},
+		{
+			name: "empty watch services flag clears env",
+			args: []string{"--watch-services="},
+			env:  map[string]string{EnvWatchServices: "ssh"},
+			want: Config{Listen: ":8080", Interval: 2 * time.Second, DataDir: "./data", HistoryInterval: 10 * time.Second},
+		},
 	}
 
 	for _, tt := range tests {
@@ -58,7 +82,7 @@ func TestLoad(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Load() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -81,6 +105,8 @@ func TestLoadErrors(t *testing.T) {
 		{name: "empty listen flag", args: []string{"--listen", ""}},
 		{name: "empty data dir flag", args: []string{"--data-dir="}},
 		{name: "unknown flag", args: []string{"--nope"}},
+		{name: "space in watched service", args: []string{"--watch-services", "ssh,my service"}},
+		{name: "path as watched service", env: map[string]string{EnvWatchServices: "/etc/systemd/ssh.service"}},
 		{name: "positional args", args: []string{"extra"}},
 	}
 

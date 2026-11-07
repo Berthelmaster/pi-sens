@@ -64,6 +64,7 @@ Every setting can be set with a flag or an environment variable. Flags win over 
 | `--interval`         | `PISENS_INTERVAL`         | `2s`     | Sample interval (Go duration)                      |
 | `--data-dir`         | `PISENS_DATA_DIR`         | `./data` | Directory for persistent data                      |
 | `--history-interval` | `PISENS_HISTORY_INTERVAL` | `10s`    | How often samples are saved to history             |
+| `--watch-services`   | `PISENS_WATCH_SERVICES`   | (none)   | Comma separated systemd services to report the state of, e.g. `ssh,pisens` |
 
 Run `./bin/pisens --help` to see them. The server shuts down cleanly on SIGINT or SIGTERM.
 

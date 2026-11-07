@@ -8,9 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	_ "github.com/Berthelmaster/pi-sens/internal/collectors" // registers the collectors
+	"github.com/Berthelmaster/pi-sens/internal/collectors" // also registers the collectors
 	"github.com/Berthelmaster/pi-sens/internal/config"
 	"github.com/Berthelmaster/pi-sens/internal/history"
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
@@ -53,7 +54,10 @@ func run() int {
 		"interval", cfg.Interval.String(),
 		"data_dir", cfg.DataDir,
 		"history_interval", cfg.HistoryInterval.String(),
+		"watch_services", strings.Join(cfg.WatchServices, ","),
 	)
+
+	collectors.SetWatchServices(cfg.WatchServices)
 
 	store, err := history.Open(ctx, cfg.DataDir)
 	if err != nil {

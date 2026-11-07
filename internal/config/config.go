@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,7 @@ const (
 	EnvDataDir  = "PISENS_DATA_DIR"
 
 	EnvHistoryInterval = "PISENS_HISTORY_INTERVAL"
+	EnvWatchServices   = "PISENS_WATCH_SERVICES"
 )
 
 // Config is the resolved runtime configuration.
@@ -43,6 +45,9 @@ type Config struct {
 	// HistoryInterval is how often samples are written to the history
 	// database.
 	HistoryInterval time.Duration
+	// WatchServices are the systemd units whose state is reported on every
+	// sample, e.g. ["ssh", "pisens.service"]. Empty means none.
+	WatchServices []string
 }
 
 // ErrHelp is returned when the user asked for usage with -h or --help.
@@ -90,6 +95,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 		}
 	}
 
+	watch := getenv(EnvWatchServices)
+
 	// The environment values become the flag defaults, so an explicit flag wins.
 	fs := flag.NewFlagSet("pisens", flag.ContinueOnError)
 	fs.SetOutput(output)
@@ -98,6 +105,8 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "data directory (env "+EnvDataDir+")")
 	fs.DurationVar(&cfg.HistoryInterval, "history-interval", cfg.HistoryInterval,
 		"how often samples are written to the history database (env "+EnvHistoryInterval+")")
+	fs.StringVar(&watch, "watch-services", watch,
+		"comma separated systemd services to report the state of, e.g. ssh,pisens (env "+EnvWatchServices+")")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
@@ -112,10 +121,23 @@ func Load(args []string, getenv func(string) string, output io.Writer) (Config, 
 	if fs.NArg() > 0 {
 		return Config{}, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
+	cfg.WatchServices = splitList(watch)
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// splitList splits a comma separated list, trimming spaces and dropping empty
+// items. It returns nil for an empty list.
+func splitList(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (c Config) validate() error {
@@ -131,6 +153,11 @@ func (c Config) validate() error {
 	}
 	if c.DataDir == "" {
 		errs = append(errs, errors.New("data directory must not be empty"))
+	}
+	for _, name := range c.WatchServices {
+		if strings.ContainsAny(name, " \t/") {
+			errs = append(errs, fmt.Errorf("invalid service name %q in the watch list", name))
+		}
 	}
 	return errors.Join(errs...)
 }
