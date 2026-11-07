@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,95 @@ func TestDefaultRules(t *testing.T) {
 		if got != r {
 			t.Errorf("default rule %s round-trips to %s", r, got)
 		}
+	}
+}
+
+func TestDefaultRuleNames(t *testing.T) {
+	var got []string
+	for _, r := range DefaultRules() {
+		got = append(got, r.Name)
+	}
+	want := []string{
+		"cpu-temp-high",
+		"cpu-temp-critical",
+		"undervoltage",
+		"throttled",
+		"disk-full",
+		"memory-high",
+		"services-failed",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("default rules = %v, want %v (update the README alerts table too)", got, want)
+	}
+}
+
+// defaultRule returns the built-in rule with the given name.
+func defaultRule(t *testing.T, name string) Rule {
+	t.Helper()
+	for _, r := range DefaultRules() {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("no default rule %q", name)
+	return Rule{}
+}
+
+func TestServicesFailedRule(t *testing.T) {
+	r := defaultRule(t, "services-failed")
+	want := Rule{Name: "services-failed", Series: "services.failed", Op: OpAbove, Threshold: 0, For: time.Minute, Severity: SeverityWarning}
+	if r != want {
+		t.Fatalf("services-failed = %s, want %s", r, want)
+	}
+
+	tests := []struct {
+		name   string
+		series map[string]float64
+		want   []string // transitions after 2m of samples every 2s
+	}{
+		{
+			// systemctl unavailable: the services collector publishes no series.
+			name:   "series missing",
+			series: map[string]float64{"temp.cpu_c": 50},
+		},
+		{
+			name:   "no failed services",
+			series: map[string]float64{"services.failed": 0},
+		},
+		{
+			name:   "one failed service",
+			series: map[string]float64{"services.failed": 1},
+			want: []string{
+				"services-failed services.failed inactive>pending @0s",
+				"services-failed services.failed pending>firing @1m0s",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := NewEvaluator([]Rule{r}, discardLogger())
+			ch, unsubscribe := e.SubscribeTransitions()
+			defer unsubscribe()
+			for at := time.Duration(0); at <= 2*time.Minute; at += 2 * time.Second {
+				e.Evaluate(snapAt(at, tt.series))
+			}
+			var got []string
+			for _, tr := range drain(ch) {
+				got = append(got, formatTransition(tr)+" @"+tr.At.Sub(t0).String())
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("transitions = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	// Short of a minute it stays pending and is not listed as firing.
+	e := NewEvaluator([]Rule{r}, discardLogger())
+	for at := time.Duration(0); at < time.Minute; at += 2 * time.Second {
+		e.Evaluate(snapAt(at, map[string]float64{"services.failed": 1}))
+	}
+	if set := e.Alerts(); len(set.Firing) != 0 {
+		t.Errorf("firing after 58s = %+v, want none", set.Firing)
 	}
 }
 

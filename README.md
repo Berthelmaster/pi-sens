@@ -185,7 +185,9 @@ Without a rules file these built-in rules apply:
 | `throttled`         | `pi.throttled > 0` for 30s    | warning  |
 | `disk-full`         | `fs.*.used_pct > 90`          | warning  |
 | `memory-high`       | `mem.used_pct > 90` for 2m    | warning  |
-| `services-failed`   | `services.failed > 0`         | warning  |
+| `services-failed`   | `services.failed > 0` for 1m  | warning  |
+
+`services-failed` fires when a systemd service has been in the failed state for a minute; the **Services** section shows which one. On a machine without systemctl there is no `services.failed` series, so it never fires.
 
 To use your own rules, point `--alerts-file` (or `PISENS_ALERTS_FILE`) at a YAML file. Its rules replace the built-in ones completely, so copy any you want to keep:
 
