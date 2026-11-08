@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import type { Writable } from 'svelte/store'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { snapshot as mockedSnapshot } from '../lib/live'
 import type { SeriesHistory } from '../lib/live'
 import type { NetQualitySection, NetQualityTarget } from '../types/netquality'
@@ -94,7 +94,15 @@ function cardStatus(): string | null {
 }
 
 describe('NetQualityWidget', () => {
-  beforeEach(() => live.set(null))
+  // Clock times get a date in front unless they are from today, so pin today
+  // to the fixtures' day. Just before 12:00Z keeps every fixture time on the
+  // same local day in every real time zone.
+  beforeEach(() => {
+    live.set(null)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-07T11:59:59Z'))
+  })
+  afterEach(() => vi.useRealTimers())
 
   it('waits for the first snapshot', () => {
     render(NetQualityWidget)
