@@ -22,6 +22,13 @@ const (
 	cacheRevalidate = "no-cache"
 )
 
+// contentTypes covers extensions of embedded files whose type Go's mime
+// package does not know or gets from the host's mime.types, which differs
+// from one system to the next. Anything else is left to http.ServeContent.
+var contentTypes = map[string]string{
+	".webmanifest": "application/manifest+json",
+}
+
 // spaHandler serves the frontend from ui. Paths that match a file serve that
 // file. Other paths without a file extension serve index.html so client-side
 // routes such as /history work as deep links. Unknown /api paths get a JSON
@@ -103,6 +110,9 @@ func (h *spaHandler) serveFile(w http.ResponseWriter, r *http.Request, name stri
 		w.Header().Set("Cache-Control", cacheImmutable)
 	} else {
 		w.Header().Set("Cache-Control", cacheRevalidate)
+	}
+	if ct, ok := contentTypes[path.Ext(name)]; ok {
+		w.Header().Set("Content-Type", ct)
 	}
 	w.Header().Set("ETag", etag)
 	http.ServeContent(w, r, info.Name(), info.ModTime(), rs)

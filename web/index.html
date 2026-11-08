@@ -3,7 +3,42 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!--
+      Cloudflare Access only lets requests through with its cookie, and
+      browsers fetch the manifest without credentials unless told otherwise.
+    -->
+    <link
+      rel="manifest"
+      href="/manifest.webmanifest"
+      crossorigin="use-credentials"
+    />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <!-- The header's background (--color-surface) in each theme. -->
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#181b21"
+      media="(prefers-color-scheme: dark)"
+    />
+    <!--
+      Standalone on iOS: the page draws under the status bar, and the header
+      pads itself out of the way with env(safe-area-inset-top).
+    -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="pisens" />
     <title>pisens</title>
     <script>
       // Apply a saved theme choice before first paint. See src/lib/theme.svelte.ts.

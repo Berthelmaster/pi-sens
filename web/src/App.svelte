@@ -118,6 +118,11 @@
     position: sticky;
     top: 0;
     z-index: 10;
+    /*
+     * Installed on a phone the page draws under the status bar and notch.
+     * The background still fills that area; the bar inside stays clear.
+     */
+    padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
     background: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
   }
@@ -197,14 +202,17 @@
   }
 
   main {
+    --pad: var(--space-4);
+
     max-width: var(--content-max-width);
     margin: 0 auto;
-    padding: var(--space-4);
+    padding: var(--pad) calc(var(--pad) + var(--safe-right))
+      calc(var(--pad) + var(--safe-bottom)) calc(var(--pad) + var(--safe-left));
   }
 
   @media (min-width: 1024px) {
     main {
-      padding: var(--space-6);
+      --pad: var(--space-6);
     }
   }
 </style>

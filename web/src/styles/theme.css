@@ -57,6 +57,17 @@
   --shadow: 0 1px 2px light-dark(rgb(0 0 0 / 0.06), rgb(0 0 0 / 0.4));
 
   --content-max-width: 112rem;
+
+  /*
+   * Safe-area insets: the notch, rounded corners and home indicator of a
+   * phone. Non-zero only with viewport-fit=cover (see index.html), mostly when
+   * the dashboard runs installed and full screen. Edge-to-edge backgrounds
+   * still reach the edge; their content pads itself in by these.
+   */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 @media (prefers-color-scheme: light) {
