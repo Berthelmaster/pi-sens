@@ -5,10 +5,12 @@
   import ConnectionStatus from './components/ConnectionStatus.svelte'
   import Hostname from './components/Hostname.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
-  import { alerts, snapshot } from './lib/live'
+  import { alerts, connection, snapshot } from './lib/live'
   import { followLink, router } from './lib/router.svelte'
+  import { servedOffline } from './lib/serviceWorker'
   import History from './pages/History.svelte'
   import NotFound from './pages/NotFound.svelte'
+  import Offline from './pages/Offline.svelte'
   import Overview from './pages/Overview.svelte'
   import { hasCritical } from './types/alerts'
   import { hostnameOf } from './types/sysinfo'
@@ -59,6 +61,14 @@
   let Page = $derived(active && 'page' in active ? active.page : NotFound)
   let lazy = $derived(active && 'load' in active ? active.load() : undefined)
 
+  // The service worker serves the cached shell, marked as offline, when the
+  // Pi cannot be reached. Show the offline page instead of the dashboard
+  // until the live stream connects, which it keeps retrying in the meantime.
+  let offline = $state(servedOffline(document))
+  $effect(() => {
+    if ($connection.state === 'live') offline = false
+  })
+
   let hostname = $derived(hostnameOf($snapshot))
   let critical = $derived(hasCritical($alerts?.firing ?? []))
 
@@ -102,15 +112,19 @@
 <AlertBanner />
 
 <main>
-  {#key router.visit}
-    {#if lazy}
-      {#await lazy then { default: LazyPage }}
-        <LazyPage />
-      {/await}
-    {:else}
-      <Page />
-    {/if}
-  {/key}
+  {#if offline}
+    <Offline />
+  {:else}
+    {#key router.visit}
+      {#if lazy}
+        {#await lazy then { default: LazyPage }}
+          <LazyPage />
+        {/await}
+      {:else}
+        <Page />
+      {/if}
+    {/key}
+  {/if}
 </main>
 
 <style>

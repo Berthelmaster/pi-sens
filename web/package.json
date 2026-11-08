@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json && prettier --check . && vitest run",
+    "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json && tsc -p tsconfig.sw.json && prettier --check . && vitest run",
     "test": "vitest run",
     "format": "prettier --write ."
   },
