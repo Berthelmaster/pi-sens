@@ -11,10 +11,13 @@ import (
 const indexHTML = "<!doctype html><title>pisens</title>"
 
 var testUI = fstest.MapFS{
-	".gitkeep":            {},
-	"index.html":          {Data: []byte(indexHTML)},
-	"favicon.svg":         {Data: []byte("<svg></svg>")},
-	"assets/index-abc.js": {Data: []byte("console.log(1)")},
+	".gitkeep":             {},
+	"index.html":           {Data: []byte(indexHTML)},
+	"favicon.svg":          {Data: []byte("<svg></svg>")},
+	"sw.js":                {Data: []byte("self.addEventListener('fetch', () => {})")},
+	"manifest.webmanifest": {Data: []byte(`{"name":"pisens"}`)},
+	"assets/index-abc.js":  {Data: []byte("console.log(1)")},
+	"assets/index-def.css": {Data: []byte("body{}")},
 }
 
 func get(t *testing.T, s *Server, target string) *httptest.ResponseRecorder {
@@ -85,6 +88,37 @@ func TestUIServesStaticFiles(t *testing.T) {
 		}
 		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, tt.contentType) {
 			t.Errorf("GET %s: Content-Type = %q, want %s", tt.target, ct, tt.contentType)
+		}
+	}
+}
+
+// TestUICacheHeaders pins the Cache-Control of each kind of file, which
+// Cloudflare and browsers follow: hashed assets are cached for good, while
+// the page, the service worker and the manifest are revalidated on every load
+// so a new release shows up straight away.
+func TestUICacheHeaders(t *testing.T) {
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
+
+	tests := []struct {
+		target, cache string
+	}{
+		{"/assets/index-abc.js", "public, max-age=31536000, immutable"},
+		{"/assets/index-def.css", "public, max-age=31536000, immutable"},
+		{"/", "no-cache"},
+		{"/index.html", "no-cache"},
+		{"/history", "no-cache"},
+		{"/sw.js", "no-cache"},
+		{"/manifest.webmanifest", "no-cache"},
+		{"/favicon.svg", "no-cache"},
+	}
+	for _, tt := range tests {
+		rec := get(t, s, tt.target)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want %d", tt.target, rec.Code, http.StatusOK)
+			continue
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != tt.cache {
+			t.Errorf("GET %s: Cache-Control = %q, want %q", tt.target, cc, tt.cache)
 		}
 	}
 }
