@@ -131,6 +131,7 @@
   .banner {
     --tone: var(--color-text-muted);
 
+    padding: 0 var(--safe-right) 0 var(--safe-left);
     background: color-mix(in srgb, var(--tone) 10%, var(--color-surface));
     border-bottom: 1px solid
       color-mix(in srgb, var(--tone) 45%, var(--color-border));

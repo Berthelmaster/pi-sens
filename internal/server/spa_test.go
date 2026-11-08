@@ -16,6 +16,7 @@ var testUI = fstest.MapFS{
 	"favicon.svg":          {Data: []byte("<svg></svg>")},
 	"sw.js":                {Data: []byte("self.addEventListener('fetch', () => {})")},
 	"manifest.webmanifest": {Data: []byte(`{"name":"pisens"}`)},
+	"icons/icon-192.png":   {Data: []byte("\x89PNG\r\n\x1a\n")},
 	"assets/index-abc.js":  {Data: []byte("console.log(1)")},
 	"assets/index-def.css": {Data: []byte("body{}")},
 }
@@ -73,6 +74,7 @@ func TestUIServesStaticFiles(t *testing.T) {
 	}{
 		{"/assets/index-abc.js", "console.log(1)", cacheImmutable, "text/javascript"},
 		{"/favicon.svg", "<svg></svg>", cacheRevalidate, "image/svg+xml"},
+		{"/icons/icon-192.png", "\x89PNG\r\n\x1a\n", cacheRevalidate, "image/png"},
 	}
 	for _, tt := range tests {
 		rec := get(t, s, tt.target)
@@ -89,6 +91,33 @@ func TestUIServesStaticFiles(t *testing.T) {
 		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, tt.contentType) {
 			t.Errorf("GET %s: Content-Type = %q, want %s", tt.target, ct, tt.contentType)
 		}
+	}
+}
+
+// Browsers want the web app manifest as application/manifest+json. Go's mime
+// package has no entry for .webmanifest, so without an explicit type it would
+// be sniffed as text/plain.
+func TestUIServesManifestAsManifestJSON(t *testing.T) {
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
+
+	rec := get(t, s, "/manifest.webmanifest")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /manifest.webmanifest: status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/manifest+json" {
+		t.Errorf("Content-Type = %q, want application/manifest+json", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != cacheRevalidate {
+		t.Errorf("Cache-Control = %q, want %q", cc, cacheRevalidate)
+	}
+	if body := rec.Body.String(); body != `{"name":"pisens"}` {
+		t.Errorf("body = %q, want the manifest", body)
+	}
+
+	// It revalidates like every other file.
+	etag := rec.Header().Get("ETag")
+	if rec := getWithETag(t, s, "/manifest.webmanifest", etag); rec.Code != http.StatusNotModified {
+		t.Errorf("GET with matching If-None-Match: status = %d, want %d", rec.Code, http.StatusNotModified)
 	}
 }
 
