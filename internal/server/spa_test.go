@@ -152,6 +152,43 @@ func TestUICacheHeaders(t *testing.T) {
 	}
 }
 
+// The service worker is served from the root, so its scope is the whole app,
+// as JavaScript (browsers refuse any other type) and revalidated on every
+// update check, so a deploy replaces the installed worker.
+func TestUIServesServiceWorker(t *testing.T) {
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
+
+	rec := get(t, s, "/sw.js")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /sw.js: status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if body := rec.Body.String(); body != "self.addEventListener('fetch', () => {})" {
+		t.Errorf("GET /sw.js: body = %q, want the worker", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+		t.Errorf("GET /sw.js: Content-Type = %q, want text/javascript", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("GET /sw.js: Cache-Control = %q, want no-cache", cc)
+	}
+
+	etag := rec.Header().Get("ETag")
+	if rec := getWithETag(t, s, "/sw.js", etag); rec.Code != http.StatusNotModified {
+		t.Errorf("GET /sw.js with matching If-None-Match: status = %d, want %d", rec.Code, http.StatusNotModified)
+	}
+}
+
+// Without a built worker /sw.js is a 404 rather than index.html, which the
+// browser would reject as a script anyway.
+func TestUIMissingServiceWorkerIs404(t *testing.T) {
+	ui := fstest.MapFS{"index.html": {Data: []byte(indexHTML)}}
+	s := New(":0", "dev", ui, discardLogger(), &fakeSource{}, nil, nil)
+
+	if rec := get(t, s, "/sw.js"); rec.Code != http.StatusNotFound {
+		t.Errorf("GET /sw.js: status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
 func TestUIMissingFilesAre404(t *testing.T) {
 	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
 

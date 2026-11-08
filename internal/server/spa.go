@@ -17,8 +17,11 @@ const (
 	// cacheImmutable is for Vite's content-hashed files under assets/. Their
 	// names change whenever their contents do, so browsers can keep them.
 	cacheImmutable = "public, max-age=31536000, immutable"
-	// cacheRevalidate is for everything else, index.html in particular, so a
-	// new binary's frontend is picked up on the next load.
+	// cacheRevalidate is for everything else, so a new binary's frontend is
+	// picked up on the next load. That includes index.html and the service
+	// worker sw.js, which the browser checks for updates against its HTTP
+	// cache: were sw.js cached, a deploy would reach an installed app only
+	// once that copy expired.
 	cacheRevalidate = "no-cache"
 )
 
