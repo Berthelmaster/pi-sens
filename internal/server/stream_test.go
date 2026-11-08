@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync"
@@ -322,5 +324,130 @@ func TestShutdownClosesStreams(t *testing.T) {
 	}
 	if n := src.subscribers(); n != 0 {
 		t.Errorf("subscribers = %d after shutdown, want 0", n)
+	}
+}
+
+// TestStreamHeadersForProxies checks the headers that keep Cloudflare, nginx
+// and similar proxies from caching, compressing or buffering the stream.
+func TestStreamHeadersForProxies(t *testing.T) {
+	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
+	ts := httptest.NewServer(New(":0", "dev", testUI, discardLogger(), src, nil, nil).Handler())
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Setting it by hand turns off the client's transparent decompression,
+	// so a compressed response would show up in Content-Encoding.
+	req.Header.Set("Accept-Encoding", "gzip, br")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	<-src.subscribed
+
+	want := map[string]string{
+		"Content-Type":      "text/event-stream",
+		"Cache-Control":     "no-cache, no-transform",
+		"X-Accel-Buffering": "no",
+		"Content-Encoding":  "",
+		"Content-Length":    "",
+	}
+	for name, value := range want {
+		if got := resp.Header.Get(name); got != value {
+			t.Errorf("%s = %q, want %q", name, got, value)
+		}
+	}
+	if got := newSSEReader(t, resp.Body).nextSnapshot(); !got.Timestamp.Equal(snapAt(1).Timestamp) {
+		t.Errorf("first snapshot = %+v, want the latest one", got)
+	}
+}
+
+func TestStreamHeartbeatBeatsCloudflareIdleTimeout(t *testing.T) {
+	// Cloudflare closes a connection that has been idle for 100 s.
+	if heartbeatInterval > 15*time.Second {
+		t.Errorf("heartbeatInterval = %v, want 15s or less", heartbeatInterval)
+	}
+}
+
+// readEvent reads the next SSE message from r, failing the test if it does
+// not arrive within a few seconds. Events held back by buffering show up here
+// as a timeout.
+func readEvent(t *testing.T, r *sseReader) sseEvent {
+	t.Helper()
+	type result struct {
+		ev  sseEvent
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		ev, err := r.next()
+		done <- result{ev, err}
+	}()
+	select {
+	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("read SSE event: %v", res.err)
+		}
+		return res.ev
+	case <-time.After(5 * time.Second):
+		t.Fatal("no SSE event within 5s: the stream is being buffered")
+		return sseEvent{}
+	}
+}
+
+// TestStreamEventsArriveOneByOneThroughProxy runs the stream through a
+// reverse proxy, as cloudflared does, and checks that every event arrives on
+// its own before the next one is even published, so nothing is batched.
+func TestStreamEventsArriveOneByOneThroughProxy(t *testing.T) {
+	src := &fakeSource{snap: snapAt(1), ok: true, subscribed: make(chan struct{}, 1)}
+	s := New(":0", "dev", testUI, discardLogger(), src, nil, nil)
+	s.heartbeatInterval = 50 * time.Millisecond
+	backend := httptest.NewServer(s.Handler())
+	t.Cleanup(backend.Close)
+	target, err := url.Parse(backend.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(httputil.NewSingleHostReverseProxy(target))
+	t.Cleanup(proxy.Close)
+
+	resp := openStream(t, context.Background(), proxy.URL)
+	<-src.subscribed
+	if cc := resp.Header.Get("Cache-Control"); cc != streamCacheControl {
+		t.Errorf("Cache-Control through the proxy = %q, want %q", cc, streamCacheControl)
+	}
+	r := newSSEReader(t, resp.Body)
+
+	nextSnapshot := func() metrics.Snapshot {
+		t.Helper()
+		for {
+			ev := readEvent(t, r)
+			if ev.comment != "" {
+				continue
+			}
+			var snap metrics.Snapshot
+			if err := json.Unmarshal([]byte(ev.data), &snap); err != nil {
+				t.Fatalf("decode snapshot %q: %v", ev.data, err)
+			}
+			return snap
+		}
+	}
+	if got := nextSnapshot(); !got.Timestamp.Equal(snapAt(1).Timestamp) {
+		t.Fatalf("first snapshot = %v, want %v", got.Timestamp, snapAt(1).Timestamp)
+	}
+	for sec := 2; sec <= 5; sec++ {
+		src.publish(snapAt(sec))
+		if got := nextSnapshot(); !got.Timestamp.Equal(snapAt(sec).Timestamp) {
+			t.Fatalf("snapshot = %v, want %v", got.Timestamp, snapAt(sec).Timestamp)
+		}
+	}
+	// With nothing published, heartbeats still come through on their own.
+	for range 2 {
+		if ev := readEvent(t, r); ev.comment != "heartbeat" {
+			t.Fatalf("event = %+v, want a heartbeat comment", ev)
+		}
 	}
 }

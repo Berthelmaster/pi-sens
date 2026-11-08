@@ -454,7 +454,7 @@ curl -u admin localhost:8080/api/metrics
 curl -N -u admin localhost:8080/api/stream
 ```
 
-Basic auth sends the password with every request, encoded but not encrypted, so anyone who can watch the traffic can read it. That is acceptable on your own LAN. To reach pisens from anywhere else, put it behind a reverse proxy that terminates TLS (Caddy, nginx or Traefik), or use a VPN such as WireGuard or Tailscale, and bind pisens to `127.0.0.1:8080` so only the proxy can reach it. If the proxy handles the login itself, leave pisens' auth off.
+Basic auth sends the password with every request, encoded but not encrypted, so anyone who can watch the traffic can read it. That is acceptable on your own LAN. To reach pisens from anywhere else, put it behind a reverse proxy that terminates TLS (Caddy, nginx or Traefik), or use a VPN such as WireGuard or Tailscale, and bind pisens to `127.0.0.1:8080` so only the proxy can reach it. If the proxy handles the login itself, leave pisens' auth off. For a Cloudflare Tunnel see [Remote access with Cloudflare Tunnel](#remote-access-with-cloudflare-tunnel).
 
 ### Adding a collector
 
@@ -505,6 +505,29 @@ sudo -u pisens vcgencmd get_throttled
 **Hardening.** The service runs with `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `NoNewPrivileges=yes` and no capabilities. It can read `/proc`, `/sys` and `/dev/vcio` but write only to `/var/lib/pisens`. Because of `ProtectHome=yes`, a separate `/home` partition does not show correct usage on the Storage widget.
 
 **Uninstall.** `sudo deploy/install.sh --uninstall` stops and disables the service and removes the unit and binary. It keeps `/etc/pisens`, `/var/lib/pisens` and the `pisens` user; add `--purge` to remove those as well.
+
+## Remote access with Cloudflare Tunnel
+
+A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) makes the dashboard reachable from anywhere over HTTPS without opening a port on your router. pisens needs no settings for it.
+
+1. Install `cloudflared` and create a tunnel as Cloudflare describes, either on the Pi or on another machine on the same network.
+2. Add a public hostname to the tunnel, such as `pi.example.com`, with service type `HTTP` and URL `http://localhost:8080`. If `cloudflared` runs on another machine, use the Pi's address instead, such as `http://192.168.1.20:8080`.
+3. **Strongly recommended:** protect the hostname with a [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-apps/) application before you use it. pisens has no login of its own by default, so without Access anyone who finds the hostname can see your Pi, including the command lines of its top processes (see [Process command lines](#process-command-lines)). In Zero Trust go to Access → Applications → Add an application → Self-hosted, enter the same hostname and add a policy that allows only you, for example the action Allow with an Include rule of Emails set to your own address. The One-time PIN login method then emails you a code when you sign in, and needs no other identity provider.
+
+If `cloudflared` runs on the Pi, you can also set `PISENS_LISTEN=127.0.0.1:8080` so the dashboard is only reachable through the tunnel and not from the rest of your network.
+
+**Basic auth.** Behind Access you do not need pisens' own [basic auth](#authentication): Access already checks who you are before a request reaches the Pi, and a second login prompt only gets in the way. Basic auth is for exposing pisens directly on a LAN.
+
+**The app.** The tunnel serves the dashboard over HTTPS, which browsers require before they let you install it as an app (PWA), and the installed app uses the same Access login as a browser tab. When the Access session runs out (24 hours by default, set per application), the live stream stops and the connection status goes to "Reconnecting" and then "Offline". Reload the page to sign in again.
+
+**How pisens helps the tunnel along.** The live stream at `/api/stream` is sent with `Cache-Control: no-cache, no-transform` and `X-Accel-Buffering: no` and flushed after every event, so Cloudflare passes events through one by one instead of compressing or buffering them. A heartbeat comment goes out every 15 seconds, well inside Cloudflare's 100 second idle timeout. The hashed files under `/assets/` are sent with `Cache-Control: public, max-age=31536000, immutable`, so Cloudflare and the browser can keep them, while `index.html` and the other files at the top level are `no-cache` and a new release shows up on the next load.
+
+**Check it works.** Open the hostname, sign in through Access and leave the dashboard open for a few minutes. The connection status in the header should stay "Live" the whole time and the numbers should keep updating every couple of seconds. If it flips to "Reconnecting" about every 100 seconds, something between you and the Pi is buffering the stream. From a terminal, `curl -N` with an Access [service token](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/), which needs a Service Auth policy on the application (or temporarily without Access) should print a `snapshot` event every sample interval rather than in bursts:
+
+```sh
+curl -N https://pi.example.com/api/stream \
+  -H "CF-Access-Client-Id: <id>" -H "CF-Access-Client-Secret: <secret>"
+```
 
 ## Automatic deployment
 

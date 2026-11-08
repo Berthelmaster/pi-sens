@@ -94,13 +94,14 @@ function cardStatus(): string | null {
 }
 
 describe('NetQualityWidget', () => {
-  // Clock times get a date in front unless they are from today, so pin today
-  // to the fixtures' day. Just before 12:00Z keeps every fixture time on the
-  // same local day in every real time zone.
+  // The fixtures are pinned to 2026-11-07, so the clock is too. Otherwise the
+  // widget shows dates instead of plain times once that day has passed.
   beforeEach(() => {
     live.set(null)
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date('2026-11-07T11:59:59Z'))
+    vi.useFakeTimers({
+      now: Date.parse('2026-11-07T12:00:05Z'),
+      toFake: ['Date'],
+    })
   })
   afterEach(() => vi.useRealTimers())
 

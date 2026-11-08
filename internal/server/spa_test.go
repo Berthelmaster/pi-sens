@@ -14,9 +14,11 @@ var testUI = fstest.MapFS{
 	".gitkeep":             {},
 	"index.html":           {Data: []byte(indexHTML)},
 	"favicon.svg":          {Data: []byte("<svg></svg>")},
+	"sw.js":                {Data: []byte("self.addEventListener('fetch', () => {})")},
 	"manifest.webmanifest": {Data: []byte(`{"name":"pisens"}`)},
 	"icons/icon-192.png":   {Data: []byte("\x89PNG\r\n\x1a\n")},
 	"assets/index-abc.js":  {Data: []byte("console.log(1)")},
+	"assets/index-def.css": {Data: []byte("body{}")},
 }
 
 func get(t *testing.T, s *Server, target string) *httptest.ResponseRecorder {
@@ -116,6 +118,37 @@ func TestUIServesManifestAsManifestJSON(t *testing.T) {
 	etag := rec.Header().Get("ETag")
 	if rec := getWithETag(t, s, "/manifest.webmanifest", etag); rec.Code != http.StatusNotModified {
 		t.Errorf("GET with matching If-None-Match: status = %d, want %d", rec.Code, http.StatusNotModified)
+	}
+}
+
+// TestUICacheHeaders pins the Cache-Control of each kind of file, which
+// Cloudflare and browsers follow: hashed assets are cached for good, while
+// the page, the service worker and the manifest are revalidated on every load
+// so a new release shows up straight away.
+func TestUICacheHeaders(t *testing.T) {
+	s := New(":0", "dev", testUI, discardLogger(), &fakeSource{}, nil, nil)
+
+	tests := []struct {
+		target, cache string
+	}{
+		{"/assets/index-abc.js", "public, max-age=31536000, immutable"},
+		{"/assets/index-def.css", "public, max-age=31536000, immutable"},
+		{"/", "no-cache"},
+		{"/index.html", "no-cache"},
+		{"/history", "no-cache"},
+		{"/sw.js", "no-cache"},
+		{"/manifest.webmanifest", "no-cache"},
+		{"/favicon.svg", "no-cache"},
+	}
+	for _, tt := range tests {
+		rec := get(t, s, tt.target)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want %d", tt.target, rec.Code, http.StatusOK)
+			continue
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != tt.cache {
+			t.Errorf("GET %s: Cache-Control = %q, want %q", tt.target, cc, tt.cache)
+		}
 	}
 }
 
