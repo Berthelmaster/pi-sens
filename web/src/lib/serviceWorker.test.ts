@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { registerServiceWorker, servedOffline } from './serviceWorker'
 
-function host(isSecureContext: boolean, register = vi.fn(async () => ({}))) {
+const registration = {} as ServiceWorkerRegistration
+
+function host(
+  isSecureContext: boolean,
+  register = vi.fn(async () => registration),
+) {
   return {
     isSecureContext,
     navigator: {
@@ -11,22 +16,22 @@ function host(isSecureContext: boolean, register = vi.fn(async () => ({}))) {
 }
 
 describe('registerServiceWorker', () => {
-  it('registers /sw.js in a secure context', () => {
+  it('registers /sw.js in a secure context', async () => {
     const h = host(true)
-    expect(registerServiceWorker(h)).toBe(true)
+    expect(await registerServiceWorker(h)).toBe(registration)
     expect(h.navigator.serviceWorker.register).toHaveBeenCalledWith('/sw.js')
   })
 
   it('does nothing over plain http on the LAN', () => {
     const h = host(false)
-    expect(registerServiceWorker(h)).toBe(false)
+    expect(registerServiceWorker(h)).toBeNull()
     expect(h.navigator.serviceWorker.register).not.toHaveBeenCalled()
   })
 
   it('does nothing without service worker support', () => {
     expect(
       registerServiceWorker({ isSecureContext: true, navigator: {} }),
-    ).toBe(false)
+    ).toBeNull()
   })
 
   it('only warns when registration fails', async () => {
@@ -38,8 +43,8 @@ describe('registerServiceWorker', () => {
         throw new Error('redirected')
       }),
     )
-    registerServiceWorker(h)
-    await vi.waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(await registerServiceWorker(h)).toBeNull()
+    expect(warn).toHaveBeenCalled()
     expect(error).not.toHaveBeenCalled()
     warn.mockRestore()
     error.mockRestore()

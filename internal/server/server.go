@@ -62,6 +62,7 @@ type HistorySource interface {
 type Server struct {
 	addr     string
 	version  string
+	webBuild string // build ID of the frontend in ui, "" without one
 	ui       fs.FS
 	logger   *slog.Logger
 	mux      *http.ServeMux
@@ -102,9 +103,10 @@ func WithEnergyPrice(price float64, currency string) Option {
 	return func(s *Server) { s.energyPrice, s.energyCurrency = price, currency }
 }
 
-// New creates a server that listens on addr, reports version from the health
-// endpoint, serves metrics from snapshots and alerts from alertSource, and
-// serves the single-page app in ui at /. ui is normally web.Dist().
+// New creates a server that listens on addr, reports version and the build ID
+// of the frontend in ui from the health endpoint, serves metrics from
+// snapshots and alerts from alertSource, and serves the single-page app in ui
+// at /. ui is normally web.Dist().
 // alertSource may be nil, which leaves out /api/alerts and the alert events.
 // historySource may be nil, which leaves out /api/series, /api/history and
 // /api/energy/daily.
@@ -113,6 +115,7 @@ func New(addr, version string, ui fs.FS, logger *slog.Logger, snapshots Snapshot
 	s := &Server{
 		addr:     addr,
 		version:  version,
+		webBuild: webBuild(ui),
 		ui:       ui,
 		logger:   logger,
 		mux:      http.NewServeMux(),
@@ -209,6 +212,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 type healthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
+	// Web is the build ID of the embedded frontend. An open page compares it
+	// with its own to offer a reload after a deploy. Left out when the
+	// frontend has none.
+	Web string `json:"web,omitempty"`
 }
 
 type errorResponse struct {
@@ -216,7 +223,7 @@ type errorResponse struct {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Version: s.version})
+	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Version: s.version, Web: s.webBuild})
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {

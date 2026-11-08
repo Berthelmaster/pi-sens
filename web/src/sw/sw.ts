@@ -6,6 +6,7 @@ import {
   cacheName,
   handleNavigation,
   handlePrecached,
+  isSkipWaiting,
   precache,
   routeFor,
   staleCaches,
@@ -36,11 +37,15 @@ self.addEventListener('install', (event) => {
     (async () => {
       const cache = await caches.open(shellCache)
       await precache(manifest, env.fetch, cache, self.location.origin)
-      // Take over from an older worker straight away. Pages are always loaded
-      // from the network when it is there, so an open tab keeps working.
-      await self.skipWaiting()
+      // A worker replacing an older one waits until a page asks it to take
+      // over (below), so open pages can offer the reload instead of being
+      // switched under their feet. The first worker takes over at once.
     })(),
   )
+})
+
+self.addEventListener('message', (event) => {
+  if (isSkipWaiting(event.data)) event.waitUntil(self.skipWaiting())
 })
 
 self.addEventListener('activate', (event) => {

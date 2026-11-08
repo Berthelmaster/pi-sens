@@ -19,17 +19,20 @@ export interface SWHost {
 }
 
 /**
- * Registers /sw.js when the context allows it and reports whether it tried.
- * A failed registration only means no offline support, so it is logged as a
- * warning and otherwise ignored.
+ * Registers /sw.js when the context allows it. Returns null when it does not,
+ * and otherwise a promise of the registration, or of null if registering
+ * failed. A failed registration only means no offline support, so it is
+ * logged as a warning and otherwise ignored.
  */
-export function registerServiceWorker(host: SWHost = window): boolean {
+export function registerServiceWorker(
+  host: SWHost = window,
+): Promise<ServiceWorkerRegistration | null> | null {
   const container = host.navigator.serviceWorker
-  if (!host.isSecureContext || !container) return false
-  container.register('/sw.js').catch((err: unknown) => {
+  if (!host.isSecureContext || !container) return null
+  return container.register('/sw.js').catch((err: unknown) => {
     console.warn('pisens: service worker registration failed', err)
+    return null
   })
-  return true
 }
 
 /**

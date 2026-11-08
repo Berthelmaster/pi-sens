@@ -2,6 +2,7 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { svelteTesting } from '@testing-library/svelte/vite'
 import { defineConfig, type Plugin } from 'vite'
+import { buildId } from './vite-plugin-build-id.ts'
 import { serviceWorker } from './vite-plugin-sw.ts'
 
 // The Go binary embeds web/dist, so the directory has to exist before the
@@ -19,7 +20,7 @@ function keepDist(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [svelte(), keepDist(), serviceWorker('src/sw/sw.ts')],
+  plugins: [svelte(), keepDist(), buildId(), serviceWorker('src/sw/sw.ts')],
   build: {
     outDir: 'dist',
     emptyOutDir: true,

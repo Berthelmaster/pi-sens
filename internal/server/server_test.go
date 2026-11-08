@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/Berthelmaster/pi-sens/internal/metrics"
@@ -98,6 +99,47 @@ func TestHealth(t *testing.T) {
 	want := map[string]string{"status": "ok", "version": "1.2.3"}
 	if len(body) != len(want) || body["status"] != want["status"] || body["version"] != want["version"] {
 		t.Errorf("body = %v, want %v", body, want)
+	}
+}
+
+func TestHealthReportsWebBuild(t *testing.T) {
+	ui := fstest.MapFS{
+		"index.html": {Data: []byte(`<!doctype html><html><head>
+<meta name="viewport" content="width=device-width">
+<meta name="pisens-build" content="fc59d77c212e4399">
+<title>pisens</title></head></html>`)},
+	}
+	s := New(":0", "1.2.3", ui, discardLogger(), &fakeSource{}, nil, nil)
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["web"] != "fc59d77c212e4399" || body["version"] != "1.2.3" {
+		t.Errorf("body = %v, want web fc59d77c212e4399 and version 1.2.3", body)
+	}
+}
+
+func TestWebBuild(t *testing.T) {
+	tests := []struct {
+		name string
+		ui   fstest.MapFS
+		want string
+	}{
+		{"stamped", fstest.MapFS{"index.html": {Data: []byte(`<meta name="pisens-build" content="abc123">`)}}, "abc123"},
+		{"no build ID", fstest.MapFS{"index.html": {Data: []byte(indexHTML)}}, ""},
+		{"empty build ID", fstest.MapFS{"index.html": {Data: []byte(`<meta name="pisens-build" content="">`)}}, ""},
+		{"not built", fstest.MapFS{".gitkeep": {}}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := webBuild(tt.ui); got != tt.want {
+				t.Errorf("webBuild() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

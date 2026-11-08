@@ -5,6 +5,7 @@
   import ConnectionStatus from './components/ConnectionStatus.svelte'
   import Hostname from './components/Hostname.svelte'
   import ThemeToggle from './components/ThemeToggle.svelte'
+  import UpdateToast from './components/UpdateToast.svelte'
   import { alerts, connection, snapshot } from './lib/live'
   import { followLink, router } from './lib/router.svelte'
   import { servedOffline } from './lib/serviceWorker'
@@ -126,6 +127,8 @@
     {/key}
   {/if}
 </main>
+
+<UpdateToast />
 
 <style>
   .app-header {
