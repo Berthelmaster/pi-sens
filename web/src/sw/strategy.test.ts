@@ -9,6 +9,7 @@ import {
   cacheName,
   handleNavigation,
   handlePrecached,
+  isSkipWaiting,
   offlineFallback,
   precache,
   routeFor,
@@ -275,5 +276,23 @@ describe('caches', () => {
         CACHE_PREFIX + 'abc123',
       ),
     ).toEqual([CACHE_PREFIX + 'old'])
+  })
+})
+
+describe('isSkipWaiting', () => {
+  it('spots the message the update toast sends', () => {
+    expect(isSkipWaiting({ type: 'pisens-skip-waiting' })).toBe(true)
+  })
+
+  it('ignores anything else', () => {
+    for (const data of [
+      null,
+      undefined,
+      'pisens-skip-waiting',
+      { type: 'SKIP_WAITING' },
+      {},
+    ]) {
+      expect(isSkipWaiting(data), String(data)).toBe(false)
+    }
   })
 })

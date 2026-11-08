@@ -40,6 +40,22 @@ export const OFFLINE_DETAIL = 'It will reconnect when the Pi is back.'
 export const OFFLINE_META = 'pisens-offline'
 
 /**
+ * The message a page sends a waiting worker when the user asks for the new
+ * version (Reload in the update toast). Same as SKIP_WAITING_MESSAGE in
+ * src/lib/update.ts.
+ */
+export const SKIP_WAITING_MESSAGE = 'pisens-skip-waiting'
+
+/** Whether a message from a page asks the worker to take over. */
+export function isSkipWaiting(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { type?: unknown }).type === SKIP_WAITING_MESSAGE
+  )
+}
+
+/**
  * Statuses that mean the Pi is unreachable rather than that it answered.
  * Cloudflare sends 502 when the tunnel is up but nothing listens behind it
  * (pisens stopped, Pi rebooting) and 530 when the tunnel itself is down; 504
