@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import type { Writable } from 'svelte/store'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { snapshot as mockedSnapshot } from '../lib/live'
 import type { SeriesHistory } from '../lib/live'
 import type { NetQualitySection, NetQualityTarget } from '../types/netquality'
@@ -94,7 +94,16 @@ function cardStatus(): string | null {
 }
 
 describe('NetQualityWidget', () => {
-  beforeEach(() => live.set(null))
+  // The fixtures are pinned to 2026-11-07, so the clock is too. Otherwise the
+  // widget shows dates instead of plain times once that day has passed.
+  beforeEach(() => {
+    live.set(null)
+    vi.useFakeTimers({
+      now: Date.parse('2026-11-07T12:00:05Z'),
+      toFake: ['Date'],
+    })
+  })
+  afterEach(() => vi.useRealTimers())
 
   it('waits for the first snapshot', () => {
     render(NetQualityWidget)
