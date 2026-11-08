@@ -12,8 +12,13 @@ import (
 
 const (
 	// heartbeatInterval is how often a stream gets an SSE comment so proxies
-	// keep the connection open even when no snapshots are flowing.
+	// keep the connection open even when no snapshots are flowing. Keep it
+	// well under Cloudflare's 100 s idle timeout.
 	heartbeatInterval = 15 * time.Second
+	// streamCacheControl keeps the stream out of caches and tells proxies
+	// such as Cloudflare not to transform it. Compressing it would make them
+	// buffer events until a compression block fills up.
+	streamCacheControl = "no-cache, no-transform"
 	// streamWriteTimeout bounds each write to a stream. It replaces the
 	// server's write timeout for the connection and drops clients that stop
 	// reading.
@@ -40,8 +45,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-store")
-	h.Set("X-Accel-Buffering", "no") // stop nginx from buffering the stream
+	h.Set("Cache-Control", streamCacheControl)
+	h.Set("X-Accel-Buffering", "no") // stop nginx and similar proxies from buffering the stream
 	w.WriteHeader(http.StatusOK)
 
 	var buf bytes.Buffer
